@@ -1,107 +1,241 @@
 # EBANX Bank API
 
-API simples de contas bancárias para o case técnico EBANX. Endpoints: `POST /reset`, `GET /balance`, `POST /event` (deposit, withdraw, transfer).
+In-memory bank account API for the EBANX technical challenge. It exposes three operations: reset state, query balance, and process financial events (deposit, withdraw, transfer).
 
-## Pré-requisitos
+With the server running, interactive documentation is available at **`/docs`** (Swagger UI), generated automatically by FastAPI.
 
-- Python 3.11+
-- [ngrok](https://ngrok.com/) (para expor a API à suíte automatizada)
+## Requirements
 
-## Como rodar localmente
+- **Python 3.11+** (`python --version`)
+- **pip** and **venv** (standard library)
+
+## Setup (first time only)
+
+From the project root:
 
 ```bash
 cd e-bank-api
 python -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 3000
 ```
 
-A API fica em `http://localhost:3000`.
+### Troubleshooting (Ubuntu / Debian / WSL)
 
-## Testes
+On Debian/Ubuntu, APT package names use the `python3` prefix, but this project uses the **`python`** command in all examples.
+
+If `python` is not found or `python -m venv .venv` fails with **ensurepip is not available**, run (adjust the venv package to your version, e.g. `python3.12-venv`):
 
 ```bash
+sudo apt update
+sudo apt install python-is-python3 python3.14-venv python3-pip
+rm -rf .venv
+python -m venv .venv
 source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+- **`python-is-python3`** — makes `python` point to Python 3 (required on many Ubuntu/WSL installs).
+- **`python3.14-venv`** — provides `venv` and `pip` for that Python version; use `python3.12-venv` or `python3.11-venv` if `python --version` differs.
+
+## Run the project
+
+**The API must be running before you call it.** `curl` or the test suite will fail with *Could not connect to server* if nothing is listening on port 3000.
+
+### Step 1 — Start the server (keep this terminal open)
+
+With the virtual environment activated:
+
+```bash
+cd e-bank-api
+source .venv/bin/activate
+uvicorn app.main:app --host 0.0.0.0 --port 3000 --reload
+```
+
+`--reload` restarts the server when you change Python files (useful during development or a live interview).
+
+You should see something like:
+
+```text
+INFO:     Uvicorn running on http://0.0.0.0:3000 (Press CTRL+C to quit)
+```
+
+Leave this process **running**. Do not close this terminal while you test the API.
+
+**Interactive docs:** open **[http://localhost:3000/docs](http://localhost:3000/docs)** in your browser to list every endpoint, view request/response schemas, and send test calls without writing `curl` commands.
+
+### Step 2 — Call the API
+
+#### Option A — Swagger UI (`/docs`)
+
+1. With the server running, go to [http://localhost:3000/docs](http://localhost:3000/docs).
+2. Try **POST /reset**, then **POST /event** (deposit / withdraw / transfer), then **GET /balance**.
+3. Request bodies and models match `app/schemas.py` (e.g. `EventIn`).
+
+Alternative layouts: [http://localhost:3000/redoc](http://localhost:3000/redoc) (ReDoc), [http://localhost:3000/openapi.json](http://localhost:3000/openapi.json) (OpenAPI JSON).
+
+#### Option B — `curl` (second terminal)
+
+Open **another** terminal and run:
+
+```bash
+curl -X POST http://localhost:3000/reset
+curl "http://localhost:3000/balance?account_id=100"
+```
+
+Expected:
+
+- `POST /reset` → HTTP 200 (empty body)
+- `GET /balance` for a missing account → HTTP 404, body `0`
+
+Example flow with a deposit:
+
+```bash
+curl -X POST http://localhost:3000/reset
+curl -X POST http://localhost:3000/event \
+  -H "Content-Type: application/json" \
+  -d '{"type":"deposit","destination":"100","amount":10}'
+curl "http://localhost:3000/balance?account_id=100"
+```
+
+Last line should return `10`.
+
+### Step 3 — Stop the server
+
+In the terminal where uvicorn is running, press **Ctrl+C**.
+
+## Running tests
+
+With the virtual environment activated:
+
+```bash
+pip install -r requirements.txt
 pytest -v
 ```
 
-Os testes validam o estado real em memória (sem mock da lógica de negócio).
+Tests exercise real in-memory state (business logic is not mocked in integration tests).
 
-## Publicar com ngrok
+## API reference
 
-Com o servidor rodando na porta 3000:
+The tables below summarize behavior. For interactive exploration, use **[`/docs`](http://localhost:3000/docs)** while the server is running.
 
-```bash
-ngrok http 3000
-```
+### `POST /reset`
 
-Use a URL HTTPS do campo **Forwarding** (ex: `https://xxxx.ngrok-free.app`) na suíte de testes da EBANX. Após o green light, envie o código-fonte.
+Clears all accounts. Returns **200** with an empty body.
 
-## Estrutura do projeto
+### `GET /balance?account_id={id}`
 
-| Arquivo | Responsabilidade |
-|---------|------------------|
-| `app/store.py` | Persistência em memória (`dict` account_id → saldo) |
-| `app/services.py` | Regras de negócio (depósito, saque, transferência, reset) |
-| `app/main.py` | Rotas HTTP (camada fina) |
-| `app/schemas.py` | Validação do payload com Pydantic |
-| `app/errors.py` | Exceções de domínio |
+| Condition | Status | Body |
+|-----------|--------|------|
+| Account exists | 200 | Plain text balance (e.g. `20`) |
+| Account does not exist | 404 | `0` |
 
-## Decisões técnicas
+Read-only: this endpoint does not modify state.
 
-- **Dependências (`requirements.txt`)**: neste take-home usei `requirements.txt` em vez de Poetry para manter o setup mínimo (`pip install -r requirements.txt`) e alinhar com a simplicidade pedida no case. Em um projeto maior ou de time, faria sentido Poetry (ou `uv`) com `poetry.lock` para versões reproduzíveis e separação clara de dependências de dev/prod.
-- **FastAPI** apenas na borda HTTP; a lógica fica em `AccountService`.
-- **Store em memória**: suficiente para o desafio; trocar persistência = alterar só `store.py`.
-- **GET /balance** só lê o store, sem efeitos colaterais.
-- **Transferência atômica**: valida saldo da origem, calcula novos saldos e aplica origem e destino no mesmo método.
-- **Erros**: conta inexistente → `404` com body `0`; saldo insuficiente → `400` com body `0` (ajuste de status isolado em `main.py` se a suíte exigir outro código).
-- **IDs de conta** são strings (`"100"`), como na especificação.
+### `POST /event`
 
-## Como estender na entrevista
+Request body is JSON. The `type` field determines required fields.
 
-- Nova regra de negócio → `app/services.py`
-- Novo tipo de evento → `app/schemas.py` + branch em `app/main.py`
-- Banco de dados → implementar a mesma interface de `InMemoryStore` em `app/store.py`
-- Mudar formato de resposta ou status HTTP → `app/main.py`
-
-## Endpoints (resumo)
-
-### POST /reset
-
-Limpa todas as contas. Resposta: `200`.
-
-### GET /balance?account_id={id}
-
-- Conta existe: `200`, body texto com o saldo (ex: `20`)
-- Conta não existe: `404`, body `0`
-
-### POST /event
-
-**Deposit**
+#### Deposit
 
 ```json
 {"type": "deposit", "destination": "100", "amount": 10}
 ```
 
-Resposta `201`: `{"destination": {"id": "100", "balance": 10}}`
+| Result | Status | Body |
+|--------|--------|------|
+| Success (creates account if needed) | 201 | `{"destination": {"id": "100", "balance": 10}}` |
 
-**Withdraw**
+#### Withdraw
 
 ```json
 {"type": "withdraw", "origin": "100", "amount": 5}
 ```
 
-Resposta `201`: `{"origin": {"id": "100", "balance": 15}}`  
-Conta inexistente: `404`, body `0`  
-Saldo insuficiente: `400`, body `0`
+| Result | Status | Body |
+|--------|--------|------|
+| Success | 201 | `{"origin": {"id": "100", "balance": 15}}` |
+| Unknown account | 404 | `0` |
+| Insufficient funds | 400 | `0` |
 
-**Transfer**
+#### Transfer
 
 ```json
 {"type": "transfer", "origin": "100", "amount": 15, "destination": "300"}
 ```
 
-Resposta `201`: `{"origin": {...}, "destination": {...}}`  
-Origem inexistente: `404`, body `0`  
-Saldo insuficiente: `400`, body `0`
+| Result | Status | Body |
+|--------|--------|------|
+| Success (creates destination if needed) | 201 | `{"origin": {"id": "...", "balance": ...}, "destination": {"id": "...", "balance": ...}}` |
+| Unknown origin | 404 | `0` |
+| Insufficient funds | 400 | `0` |
+
+Transfers are atomic: origin and destination balances are updated together after validation; failed transfers leave state unchanged.
+
+Account IDs are **strings** (e.g. `"100"`).
+
+## Project structure
+
+```
+e-bank-api/
+├── app/
+│   ├── main.py       # HTTP routes (thin layer)
+│   ├── services.py   # Business rules
+│   ├── store.py      # In-memory persistence
+│   ├── schemas.py    # Request validation (Pydantic)
+│   └── errors.py     # Domain exceptions
+├── tests/
+│   ├── test_api.py       # HTTP integration tests
+│   └── test_services.py  # Unit tests for business logic
+├── requirements.txt
+└── pytest.ini
+```
+
+## Design decisions
+
+### Layering
+
+- **HTTP** (`main.py`): maps requests/responses and status codes only.
+- **Business logic** (`services.py`): deposits, withdrawals, transfers, balance reads, reset.
+- **Storage** (`store.py`): in-memory `dict` of account ID → balance.
+
+This keeps rules testable without the web layer and makes persistence easy to swap later.
+
+### In-memory store
+
+Sufficient for the challenge scope. No database setup is required for reviewers or the test suite.
+
+### `requirements.txt` instead of Poetry
+
+This project uses **`requirements.txt`** rather than Poetry (or similar) because:
+
+1. **Minimal setup** — reviewers and CI can run `pip install -r requirements.txt` with no extra tooling.
+2. **Challenge scope** — few dependencies; a lockfile and workspace tooling add little value here.
+3. **Alignment with simplicity** — the assignment emphasizes correct behavior and clear code over infrastructure.
+
+For a larger production service or a team repo, **Poetry** or **uv** with a lockfile would be appropriate for reproducible installs and dev/prod dependency groups.
+
+### Error responses
+
+Business failures return plain text body **`0`** (not JSON), matching the challenge examples:
+
+- Missing account: **404**
+- Insufficient funds: **400**
+
+### Other guarantees
+
+- **`GET /balance`** never mutates state.
+- **Transfers** validate funds before updating both accounts in one service method.
+- **Payload validation** (required fields per event type, positive `amount`) happens in `schemas.py` before business logic runs.
+
+## Dependencies
+
+| Package | Purpose |
+|---------|---------|
+| fastapi | HTTP API |
+| uvicorn | ASGI server |
+| pydantic | Request schemas |
+| pytest | Tests |
+| httpx | Test client (via Starlette/FastAPI) |
+
+See [requirements.txt](requirements.txt) for version constraints.
