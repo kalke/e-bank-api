@@ -21,9 +21,9 @@ def _error_response(status_code: int) -> PlainTextResponse:
 
 
 @app.post("/reset")
-def reset() -> Response:
+def reset() -> PlainTextResponse:
     service.reset()
-    return Response(status_code=200)
+    return PlainTextResponse(content="OK", status_code=200)
 
 
 @app.get("/balance")
@@ -63,12 +63,6 @@ def event(body: EventIn) -> Response:
     except AccountNotFound:
         return _error_response(404)
     except InsufficientFunds as exc:
-        return JSONResponse(
-            status_code=400,
-            content={
-                "error": "Insufficient funds",
-                "message": f"Account {exc.account_id} has insufficient funds"
-            },
-        )
+        return _error_response(400)
     except InvalidAmount:
         return _error_response(400)

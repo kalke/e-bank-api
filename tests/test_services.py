@@ -86,3 +86,31 @@ def test_reset_clears_state(service: AccountService) -> None:
 def test_invalid_amount(service: AccountService) -> None:
     with pytest.raises(InvalidAmount):
         service.deposit("100", 0)
+    with pytest.raises(InvalidAmount):
+        service.withdraw("100", -1)
+    with pytest.raises(InvalidAmount):
+        service.transfer("100", "200", 0)
+
+
+def test_withdraw_entire_balance(service: AccountService) -> None:
+    service.deposit("100", 10)
+    result = service.withdraw("100", 10)
+    assert result.balance == 0
+    assert service.get_balance("100") == 0
+
+
+def test_transfer_adds_to_existing_destination_balance(
+    service: AccountService,
+) -> None:
+    service.deposit("100", 20)
+    service.deposit("300", 5)
+    origin, destination = service.transfer("100", "300", 10)
+    assert origin.balance == 10
+    assert destination.balance == 15
+
+
+def test_insufficient_funds_carries_account_id(service: AccountService) -> None:
+    service.deposit("100", 3)
+    with pytest.raises(InsufficientFunds) as exc_info:
+        service.withdraw("100", 10)
+    assert exc_info.value.args[0] == "100"

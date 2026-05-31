@@ -85,7 +85,7 @@ curl "http://localhost:3000/balance?account_id=100"
 
 Expected:
 
-- `POST /reset` → HTTP 200 (empty body)
+- `POST /reset` → HTTP 200, body `OK`
 - `GET /balance` for a missing account → HTTP 404, body `0`
 
 Example flow with a deposit:
@@ -121,7 +121,7 @@ The tables below summarize behavior. For interactive exploration, use **[`/docs`
 
 ### `POST /reset`
 
-Clears all accounts. Returns **200** with an empty body.
+Clears all accounts. Returns **200** with body **`OK`** (plain text).
 
 ### `GET /balance?account_id={id}`
 
