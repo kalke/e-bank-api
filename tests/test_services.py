@@ -113,4 +113,4 @@ def test_insufficient_funds_carries_account_id(service: AccountService) -> None:
     service.deposit("100", 3)
     with pytest.raises(InsufficientFunds) as exc_info:
         service.withdraw("100", 10)
-    assert exc_info.value.args[0] == "100"
+    assert exc_info.value.account_id == "100"

@@ -14,7 +14,7 @@ def reset_state() -> None:
 def test_full_flow_from_spec() -> None:
     response = client.get("/balance", params={"account_id": "1234"})
     assert response.status_code == 404
-    assert response.text == "0"
+    assert response.json() == {"message": "Account 1234 not found"}
 
     response = client.post(
         "/event",
@@ -39,7 +39,7 @@ def test_full_flow_from_spec() -> None:
         json={"type": "withdraw", "origin": "200", "amount": 10},
     )
     assert response.status_code == 404
-    assert response.text == "0"
+    assert response.json() == {"message": "Account 200 not found"}
 
     response = client.post(
         "/event",
@@ -73,7 +73,7 @@ def test_full_flow_from_spec() -> None:
         },
     )
     assert response.status_code == 404
-    assert response.text == "0"
+    assert response.json() == {"message": "Account 200 not found"}
 
 
 def test_insufficient_funds_withdraw() -> None:
@@ -87,7 +87,7 @@ def test_insufficient_funds_withdraw() -> None:
         json={"type": "withdraw", "origin": "100", "amount": 10},
     )
     assert response.status_code == 400
-    assert response.text == "0"
+    assert response.json() == {"message": "Account 100 has insufficient funds"}
 
     balance = client.get("/balance", params={"account_id": "100"})
     assert balance.status_code == 200
@@ -110,7 +110,7 @@ def test_insufficient_funds_transfer() -> None:
         },
     )
     assert response.status_code == 400
-    assert response.text == "0"
+    assert response.json() == {"message": "Account 100 has insufficient funds"}
 
     origin = client.get("/balance", params={"account_id": "100"})
     assert origin.text == "5"
@@ -127,7 +127,7 @@ def test_reset_clears_state() -> None:
     client.post("/reset")
     response = client.get("/balance", params={"account_id": "100"})
     assert response.status_code == 404
-    assert response.text == "0"
+    assert response.json() == {"message": "Account 100 not found"}
 
 
 def test_reset_returns_200_ok() -> None:
