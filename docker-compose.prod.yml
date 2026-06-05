@@ -1,10 +1,16 @@
 services:
   api:
     volumes: !override []
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4"
     environment:
       ENV: production
       LOG_LEVEL: INFO
+    restart: always
+
+  postgres:
+    ports: !override []
     restart: always
 
   redis:

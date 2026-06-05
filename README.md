@@ -47,6 +47,7 @@ pip install -r requirements-dev.txt
 | Service | Port | Description |
 |---------|------|-------------|
 | FastAPI | 8000 | Main application |
+| PostgreSQL | 5432 | Primary database (accounts + transactions) |
 | Redis | 6379 | Idempotency cache + rate limiting (internal network only) |
 | Redis Commander | 8081 | Redis GUI (debug profile only) |
 
@@ -85,6 +86,18 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up
 | `REDIS_URL` | Redis connection URL | `redis://redis:6379/0` |
 | `REDIS_TTL_PROCESSING` | Idempotency lock TTL in seconds | `30` |
 | `REDIS_TTL_COMPLETED` | Idempotency cache TTL in seconds | `86400` |
+| `DATABASE_URL` | PostgreSQL connection URL (asyncpg driver) | `postgresql+asyncpg://ebank:ebank@postgres:5432/ebank` |
+| `DATABASE_URL_TEST` | Test database URL (SQLite in-memory for local tests) | `sqlite+aiosqlite:///:memory:` |
+| `POSTGRES_USER` | PostgreSQL username | `ebank` |
+| `POSTGRES_PASSWORD` | PostgreSQL password | `ebank` |
+| `POSTGRES_DB` | PostgreSQL database name | `ebank` |
+
+### Database
+
+- **Run migrations:** `make migrate`
+- **Create a new migration:** `make migration name="describe_change"`
+- **Access the DB shell:** `make db-shell`
+- Migrations run automatically on container startup (`alembic upgrade head` before uvicorn).
 
 ## Run the project
 
@@ -247,7 +260,9 @@ e-bank-api/
 ├── app/
 │   ├── main.py       # HTTP routes (thin layer)
 │   ├── services.py   # Business rules
-│   ├── store.py      # In-memory persistence
+│   ├── core/database.py  # Async engine, session, migrations base
+│   ├── models/account.py # SQLAlchemy Account model
+│   ├── repositories/     # DB queries (AccountRepository)
 │   ├── schemas.py    # Request validation (Pydantic)
 │   └── errors.py     # Domain exceptions
 ├── tests/
@@ -270,13 +285,9 @@ e-bank-api/
 
 - **HTTP** (`main.py`): maps requests/responses and status codes only.
 - **Business logic** (`services.py`): deposits, withdrawals, transfers, balance reads, reset.
-- **Storage** (`store.py`): in-memory `dict` of account ID → balance.
+- **Persistence** (`repositories/`): PostgreSQL via SQLAlchemy async; row-level locks on withdraw/transfer.
 
-This keeps rules testable without the web layer and makes persistence easy to swap later.
-
-### In-memory store
-
-Sufficient for the challenge scope. No database setup is required for reviewers or the test suite.
+This keeps rules testable without the web layer and isolates DB access in the repository layer.
 
 ### `requirements.txt` instead of Poetry
 

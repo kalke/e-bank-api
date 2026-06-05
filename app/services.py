@@ -1,8 +1,9 @@
 from dataclasses import dataclass
+from decimal import Decimal
 
 from app.core.logger import get_logger
 from app.errors import AccountNotFound, InsufficientFunds, InvalidAmount
-from app.store import InMemoryStore
+from app.repositories.account_repository import AccountRepository
 
 logger = get_logger(__name__)
 
@@ -16,84 +17,138 @@ class Account:
 class AccountService:
     OVERDRAFT_LIMIT = -1000
 
-    def __init__(self, store: InMemoryStore) -> None:
-        self._store = store
+    def __init__(self, repository: AccountRepository) -> None:
+        self._repo = repository
 
-    def reset(self) -> None:
-        self._store.clear()
+    async def reset(self) -> None:
+        await self._repo.delete_all()
         logger.info("accounts_reset")
 
-    def get_balance(self, account_id: str) -> int:
-        balance = self._store.get_balance(account_id)
-        if balance is None:
+    async def get_balance(self, account_id: str) -> int:
+        account = await self._repo.get(account_id)
+        if account is None:
             logger.warning("account_not_found", account_id=account_id)
             raise AccountNotFound(account_id)
+        balance = _to_int_balance(account.balance)
         logger.debug("balance_retrieved", account_id=account_id, balance=balance)
         return balance
 
-    def deposit(self, destination: str, amount: int) -> Account:
+    async def deposit(self, destination: str, amount: int) -> Account:
         self._validate_amount(amount)
-        current = self._store.get_balance(destination) or 0
-        new_balance = current + amount
-        self._store.set_balance(destination, new_balance)
+        amount_decimal = Decimal(amount)
+        account = await self._repo.get(destination)
+        if account is None:
+            created = await self._repo.create(destination, amount_decimal)
+            logger.info(
+                "deposit_completed",
+                destination=destination,
+                amount=amount,
+                previous_balance=0,
+                new_balance=amount,
+            )
+            return Account(id=destination, balance=_to_int_balance(created.balance))
+
+        previous_balance = _to_int_balance(account.balance)
+        updated = await self._repo.record_transaction(
+            destination,
+            amount_decimal,
+            "deposit",
+        )
+        new_balance_int = _to_int_balance(updated.balance)
         logger.info(
             "deposit_completed",
             destination=destination,
             amount=amount,
-            previous_balance=current,
-            new_balance=new_balance,
+            previous_balance=previous_balance,
+            new_balance=new_balance_int,
         )
-        return Account(id=destination, balance=new_balance)
+        return Account(id=destination, balance=new_balance_int)
 
-    def withdraw(self, origin: str, amount: int) -> Account:
+    async def withdraw(self, origin: str, amount: int) -> Account:
         self._validate_amount(amount)
-        current = self._store.get_balance(origin)
-        if current is None:
+        amount_decimal = Decimal(amount)
+        account = await self._repo.get_for_update(origin)
+        if account is None:
             logger.warning("account_not_found", account_id=origin)
             raise AccountNotFound(origin)
+
+        current = _to_int_balance(account.balance)
         self._validate_limit(origin, current, amount)
-        new_balance = current - amount
-        self._store.set_balance(origin, new_balance)
+        updated = await self._repo.record_transaction(
+            origin,
+            -amount_decimal,
+            "withdraw",
+        )
+        new_balance_int = _to_int_balance(updated.balance)
         logger.info(
             "withdraw_completed",
             origin=origin,
             amount=amount,
             previous_balance=current,
-            new_balance=new_balance,
+            new_balance=new_balance_int,
         )
-        return Account(id=origin, balance=new_balance)
+        return Account(id=origin, balance=new_balance_int)
 
-    def transfer(
-        self, origin: str, destination: str, amount: int
+    async def transfer(
+        self,
+        origin: str,
+        destination: str,
+        amount: int,
     ) -> tuple[Account, Account]:
         self._validate_amount(amount)
-        origin_balance = self._store.get_balance(origin)
-        if origin_balance is None:
+        amount_decimal = Decimal(amount)
+
+        origin_account = await self._repo.get_for_update(origin)
+        if origin_account is None:
             logger.warning("account_not_found", account_id=origin)
             raise AccountNotFound(origin)
+
+        origin_balance = _to_int_balance(origin_account.balance)
         self._validate_limit(origin, origin_balance, amount)
 
-        dest_balance = self._store.get_balance(destination) or 0
-        new_origin_balance = origin_balance - amount
-        new_dest_balance = dest_balance + amount
+        if await self._repo.get(destination) is None:
+            await self._repo.ensure_account(destination)
+        await self._repo.lock_accounts_for_update(origin, destination)
 
-        self._store.set_balance(origin, new_origin_balance)
-        self._store.set_balance(destination, new_dest_balance)
+        origin_account = await self._repo.get(origin)
+        if origin_account is None:
+            raise AccountNotFound(origin)
 
+        dest_account = await self._repo.get(destination)
+        if dest_account is None:
+            raise AccountNotFound(destination)
+
+        dest_balance = _to_int_balance(dest_account.balance)
+
+        updated_origin = await self._repo.record_transaction(
+            origin,
+            -amount_decimal,
+            "transfer_out",
+            destination,
+        )
+        updated_destination = await self._repo.record_transaction(
+            destination,
+            amount_decimal,
+            "transfer_in",
+            origin,
+        )
+
+        origin_new = _to_int_balance(updated_origin.balance)
+        destination_new = _to_int_balance(updated_destination.balance)
         logger.info(
             "transfer_completed",
             origin=origin,
             destination=destination,
             amount=amount,
             origin_previous_balance=origin_balance,
-            origin_new_balance=new_origin_balance,
+            origin_new_balance=origin_new,
             destination_previous_balance=dest_balance,
-            destination_new_balance=new_dest_balance,
+            destination_new_balance=destination_new,
         )
 
         return (
-            Account(id=origin, balance=new_origin_balance),
-            Account(id=destination, balance=new_dest_balance),
+            Account(id=origin, balance=origin_new),
+            Account(id=destination, balance=destination_new),
         )
 
     @staticmethod
@@ -112,3 +167,7 @@ class AccountService:
                 overdraft_limit=self.OVERDRAFT_LIMIT,
             )
             raise InsufficientFunds(origin)
+
+
+def _to_int_balance(balance: Decimal) -> int:
+    return int(balance)

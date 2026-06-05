@@ -3,26 +3,25 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 import redis.asyncio as redis
-from fastapi import FastAPI, Query, Request, Response
+from fastapi import Depends, FastAPI, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.core.database import check_database_connection, get_db
 from app.core.exceptions import DuplicateRequestException, IdempotencyStorageException
 from app.core.idempotency import IdempotencyService, set_idempotency_service
 from app.core.logger import configure_logging, get_logger
 from app.core.middleware import RequestLoggingMiddleware
 from app.errors import DomainError
 from app.middleware.idempotency_middleware import IdempotencyMiddleware
+from app.repositories.account_repository import AccountRepository
 from app.schemas import EventIn
 from app.services import Account, AccountService
-from app.store import InMemoryStore
 
 configure_logging()
 logger = get_logger(__name__)
-
-store = InMemoryStore()
-service = AccountService(store)
 
 IDEMPOTENCY_ENABLED = os.getenv("IDEMPOTENCY_ENABLED", "false").lower() == "true"
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -32,6 +31,9 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     redis_client: redis.Redis | None = None
     idempotency_service: IdempotencyService | None = None
+
+    await check_database_connection()
+    logger.info("database_connected")
 
     if IDEMPOTENCY_ENABLED:
         try:
@@ -71,6 +73,10 @@ app.add_middleware(RequestLoggingMiddleware)
 
 def _account_out(account: Account) -> dict[str, str | int]:
     return {"id": account.id, "balance": account.balance}
+
+
+def _service(db: AsyncSession) -> AccountService:
+    return AccountService(AccountRepository(db))
 
 
 @app.exception_handler(DuplicateRequestException)
@@ -169,32 +175,40 @@ def health() -> dict[str, str]:
 
 
 @app.post("/reset")
-def reset() -> PlainTextResponse:
-    service.reset()
+async def reset(db: AsyncSession = Depends(get_db)) -> PlainTextResponse:
+    await _service(db).reset()
     return PlainTextResponse(content="OK", status_code=200)
 
 
 @app.get("/balance")
-def balance(account_id: str = Query(...)) -> PlainTextResponse:
-    value = service.get_balance(account_id)
+async def balance(
+    account_id: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+) -> PlainTextResponse:
+    value = await _service(db).get_balance(account_id)
     return PlainTextResponse(content=str(value), status_code=200)
 
 
 @app.post("/event")
-def event(body: EventIn) -> Response:
+async def event(body: EventIn, db: AsyncSession = Depends(get_db)) -> Response:
+    service = _service(db)
     if body.type == "deposit":
-        account = service.deposit(body.destination, body.amount)
+        account = await service.deposit(body.destination, body.amount)
         return JSONResponse(
             status_code=201,
             content={"destination": _account_out(account)},
         )
     if body.type == "withdraw":
-        account = service.withdraw(body.origin, body.amount)
+        account = await service.withdraw(body.origin, body.amount)
         return JSONResponse(
             status_code=201,
             content={"origin": _account_out(account)},
         )
-    origin, destination = service.transfer(body.origin, body.destination, body.amount)
+    origin, destination = await service.transfer(
+        body.origin,
+        body.destination,
+        body.amount,
+    )
     return JSONResponse(
         status_code=201,
         content={

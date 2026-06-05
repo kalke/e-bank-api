@@ -1,19 +1,15 @@
+from collections.abc import Awaitable, Callable
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app.errors import AccountNotFound, InsufficientFunds
 from app.main import app
 from app.services import AccountService
-from app.store import InMemoryStore
 
 OVERDRAFT_LIMIT = AccountService.OVERDRAFT_LIMIT
 
 client = TestClient(app)
-
-
-@pytest.fixture
-def service() -> AccountService:
-    return AccountService(InMemoryStore())
 
 
 @pytest.fixture(autouse=True)
@@ -22,116 +18,139 @@ def reset_api_state() -> None:
 
 
 class TestOverdraftLimitService:
-    def test_withdraw_from_zero_balance_goes_negative(
-        self, service: AccountService
+    async def test_withdraw_from_zero_balance_goes_negative(
+        self,
+        service: AccountService,
+        set_balance: Callable[[str, int], Awaitable[None]],
     ) -> None:
-        service._store.set_balance("100", 0)
+        await set_balance("100", 0)
 
-        result = service.withdraw("100", 100)
+        result = await service.withdraw("100", 100)
         assert result.balance == -100
 
-    def test_transfer_from_zero_balance_goes_negative(
-        self, service: AccountService
+    async def test_transfer_from_zero_balance_goes_negative(
+        self,
+        service: AccountService,
+        set_balance: Callable[[str, int], Awaitable[None]],
     ) -> None:
-        service._store.set_balance("100", 0)
+        await set_balance("100", 0)
 
-        origin, destination = service.transfer("100", "300", 250)
+        origin, destination = await service.transfer("100", "300", 250)
         assert origin.balance == -250
         assert destination.balance == 250
 
-    def test_withdraw_exactly_at_overdraft_limit(self, service: AccountService) -> None:
-        service.deposit("100", 200)
+    async def test_withdraw_exactly_at_overdraft_limit(
+        self,
+        service: AccountService,
+    ) -> None:
+        await service.deposit("100", 200)
 
-        result = service.withdraw("100", 1200)
+        result = await service.withdraw("100", 1200)
         assert result.balance == OVERDRAFT_LIMIT
 
-    def test_transfer_exactly_at_overdraft_limit(self, service: AccountService) -> None:
-        service.deposit("100", 200)
+    async def test_transfer_exactly_at_overdraft_limit(
+        self,
+        service: AccountService,
+    ) -> None:
+        await service.deposit("100", 200)
 
-        origin, destination = service.transfer("100", "300", 1200)
+        origin, destination = await service.transfer("100", "300", 1200)
         assert origin.balance == OVERDRAFT_LIMIT
         assert destination.balance == 1200
 
-    def test_withdraw_one_over_overdraft_limit_is_rejected(
-        self, service: AccountService
+    async def test_withdraw_one_over_overdraft_limit_is_rejected(
+        self,
+        service: AccountService,
     ) -> None:
-        service.deposit("100", 200)
+        await service.deposit("100", 200)
 
         with pytest.raises(InsufficientFunds):
-            service.withdraw("100", 1201)
+            await service.withdraw("100", 1201)
 
-        assert service.get_balance("100") == 200
+        assert await service.get_balance("100") == 200
 
-    def test_transfer_one_over_overdraft_limit_is_rejected(
-        self, service: AccountService
+    async def test_transfer_one_over_overdraft_limit_is_rejected(
+        self,
+        service: AccountService,
     ) -> None:
-        service.deposit("100", 200)
+        await service.deposit("100", 200)
 
         with pytest.raises(InsufficientFunds):
-            service.transfer("100", "300", 1201)
+            await service.transfer("100", "300", 1201)
 
-        assert service.get_balance("100") == 200
+        assert await service.get_balance("100") == 200
         with pytest.raises(AccountNotFound):
-            service.get_balance("300")
+            await service.get_balance("300")
 
-    def test_withdraw_from_account_already_at_limit_is_rejected(
-        self, service: AccountService
+    async def test_withdraw_from_account_already_at_limit_is_rejected(
+        self,
+        service: AccountService,
+        set_balance: Callable[[str, int], Awaitable[None]],
     ) -> None:
-        service._store.set_balance("100", OVERDRAFT_LIMIT)
+        await set_balance("100", OVERDRAFT_LIMIT)
 
         with pytest.raises(InsufficientFunds):
-            service.withdraw("100", 1)
+            await service.withdraw("100", 1)
 
-        assert service.get_balance("100") == OVERDRAFT_LIMIT
+        assert await service.get_balance("100") == OVERDRAFT_LIMIT
 
-    def test_transfer_from_account_already_at_limit_is_rejected(
-        self, service: AccountService
+    async def test_transfer_from_account_already_at_limit_is_rejected(
+        self,
+        service: AccountService,
+        set_balance: Callable[[str, int], Awaitable[None]],
     ) -> None:
-        service._store.set_balance("100", OVERDRAFT_LIMIT)
+        await set_balance("100", OVERDRAFT_LIMIT)
 
         with pytest.raises(InsufficientFunds):
-            service.transfer("100", "300", 1)
+            await service.transfer("100", "300", 1)
 
-        assert service.get_balance("100") == OVERDRAFT_LIMIT
+        assert await service.get_balance("100") == OVERDRAFT_LIMIT
 
-    def test_withdraw_from_negative_balance_up_to_limit(
-        self, service: AccountService
+    async def test_withdraw_from_negative_balance_up_to_limit(
+        self,
+        service: AccountService,
+        set_balance: Callable[[str, int], Awaitable[None]],
     ) -> None:
-        service._store.set_balance("100", -700)
+        await set_balance("100", -700)
 
-        result = service.withdraw("100", 300)
+        result = await service.withdraw("100", 300)
         assert result.balance == OVERDRAFT_LIMIT
 
-    def test_transfer_from_negative_balance_up_to_limit(
-        self, service: AccountService
+    async def test_transfer_from_negative_balance_up_to_limit(
+        self,
+        service: AccountService,
+        set_balance: Callable[[str, int], Awaitable[None]],
     ) -> None:
-        service._store.set_balance("100", -700)
+        await set_balance("100", -700)
 
-        origin, destination = service.transfer("100", "300", 300)
+        origin, destination = await service.transfer("100", "300", 300)
         assert origin.balance == OVERDRAFT_LIMIT
         assert destination.balance == 300
 
-    def test_withdraw_from_negative_balance_one_over_limit_is_rejected(
-        self, service: AccountService
+    async def test_withdraw_from_negative_balance_one_over_limit_is_rejected(
+        self,
+        service: AccountService,
+        set_balance: Callable[[str, int], Awaitable[None]],
     ) -> None:
-        service._store.set_balance("100", -700)
+        await set_balance("100", -700)
 
         with pytest.raises(InsufficientFunds):
-            service.withdraw("100", 301)
+            await service.withdraw("100", 301)
 
-        assert service.get_balance("100") == -700
+        assert await service.get_balance("100") == -700
 
-    def test_transfer_over_limit_does_not_change_destination(
-        self, service: AccountService
+    async def test_transfer_over_limit_does_not_change_destination(
+        self,
+        service: AccountService,
     ) -> None:
-        service.deposit("100", 10)
-        service.deposit("300", 50)
+        await service.deposit("100", 10)
+        await service.deposit("300", 50)
 
         with pytest.raises(InsufficientFunds):
-            service.transfer("100", "300", 1011)
+            await service.transfer("100", "300", 1011)
 
-        assert service.get_balance("100") == 10
-        assert service.get_balance("300") == 50
+        assert await service.get_balance("100") == 10
+        assert await service.get_balance("300") == 50
 
 
 class TestOverdraftLimitApi:

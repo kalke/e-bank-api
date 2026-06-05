@@ -20,6 +20,8 @@ RUN apt-get update \
 
 COPY --from=builder /root/.local /home/appuser/.local
 COPY app/ ./app/
+COPY alembic/ ./alembic/
+COPY alembic.ini ./
 
 RUN chown -R appuser:appuser /app
 
