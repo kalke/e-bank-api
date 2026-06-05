@@ -1,14 +1,19 @@
+import os
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
+import redis.asyncio as redis
 from fastapi import FastAPI, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.core.exceptions import DuplicateRequestException, IdempotencyStorageException
+from app.core.idempotency import IdempotencyService, set_idempotency_service
 from app.core.logger import configure_logging, get_logger
 from app.core.middleware import RequestLoggingMiddleware
 from app.errors import DomainError
+from app.middleware.idempotency_middleware import IdempotencyMiddleware
 from app.schemas import EventIn
 from app.services import Account, AccountService
 from app.store import InMemoryStore
@@ -19,22 +24,101 @@ logger = get_logger(__name__)
 store = InMemoryStore()
 service = AccountService(store)
 
+IDEMPOTENCY_ENABLED = os.getenv("IDEMPOTENCY_ENABLED", "false").lower() == "true"
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    redis_client: redis.Redis | None = None
+    idempotency_service: IdempotencyService | None = None
+
+    if IDEMPOTENCY_ENABLED:
+        try:
+            redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+            await redis_client.ping()
+            idempotency_service = IdempotencyService(redis_client)
+            logger.info(
+                "idempotency_enabled",
+                redis_url=REDIS_URL.split("@")[-1],
+            )
+        except Exception as exc:
+            logger.critical(
+                "idempotency_startup_failed",
+                error=str(exc),
+                exc_info=True,
+            )
+            raise
+
+    app.state.redis_client = redis_client
+    app.state.idempotency_service = idempotency_service
+    set_idempotency_service(idempotency_service)
+
     logger.info("application_startup", status="ready")
     try:
         yield
     finally:
+        if redis_client is not None:
+            await redis_client.aclose()
+        set_idempotency_service(None)
         logger.info("application_shutdown", status="stopped")
 
 
 app = FastAPI(title="EBANX Bank API", lifespan=lifespan)
+app.add_middleware(IdempotencyMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
 
 
 def _account_out(account: Account) -> dict[str, str | int]:
     return {"id": account.id, "balance": account.balance}
+
+
+@app.exception_handler(DuplicateRequestException)
+def handle_duplicate_request(
+    request: Request,
+    exc: DuplicateRequestException,
+) -> JSONResponse:
+    idempotency_key = getattr(request.state, "idempotency_key", exc.idempotency_key)
+    get_logger("app.errors").warning(
+        "duplicate_request",
+        idempotency_key=idempotency_key,
+        path=request.url.path,
+    )
+    response = JSONResponse(
+        status_code=409,
+        content={
+            "error": "duplicate_request",
+            "message": str(exc),
+        },
+    )
+    response.headers["X-Idempotency-Key"] = idempotency_key
+    response.headers["X-Idempotency-Status"] = "CONFLICT"
+    return response
+
+
+@app.exception_handler(IdempotencyStorageException)
+def handle_idempotency_storage_error(
+    request: Request,
+    exc: IdempotencyStorageException,
+) -> JSONResponse:
+    idempotency_key = getattr(request.state, "idempotency_key", None)
+    get_logger("app.errors").error(
+        "idempotency.storage_error",
+        idempotency_key=idempotency_key,
+        path=request.url.path,
+        error=str(exc),
+        exc_info=True,
+    )
+    response = JSONResponse(
+        status_code=503,
+        content={
+            "error": "idempotency_storage_unavailable",
+            "message": str(exc),
+        },
+    )
+    if idempotency_key:
+        response.headers["X-Idempotency-Key"] = idempotency_key
+    return response
 
 
 @app.exception_handler(DomainError)
@@ -77,6 +161,11 @@ def handle_unhandled_exception(request: Request, exc: Exception) -> JSONResponse
         status_code=500,
         content={"message": "Internal server error"},
     )
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
 
 
 @app.post("/reset")

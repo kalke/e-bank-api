@@ -40,6 +40,52 @@ pip install -r requirements-dev.txt
 - **`python-is-python3`** — makes `python` point to Python 3 (required on many Ubuntu/WSL installs).
 - **`python3.14-venv`** — provides `venv` and `pip` for that Python version; use `python3.12-venv` or `python3.11-venv` if `python --version` differs.
 
+## Infrastructure
+
+### Services
+
+| Service | Port | Description |
+|---------|------|-------------|
+| FastAPI | 8000 | Main application |
+| Redis | 6379 | Idempotency cache + rate limiting (internal network only) |
+| Redis Commander | 8081 | Redis GUI (debug profile only) |
+
+### Running locally
+
+```bash
+# Copy environment variables
+cp .env.example .env
+
+# Start all services
+docker compose up --build
+
+# Start with Redis GUI
+docker compose --profile debug up --build
+
+# Production mode
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up
+```
+
+### Redis config notes
+
+- Max memory: 256mb with LRU eviction (safe for idempotency keys)
+- Persistence: AOF enabled with `everysec` fsync (balance between durability and performance)
+- Data is persisted in the `redis_data` named volume
+
+### Environment variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ENV` | Runtime environment (`development` or `production`) | `development` |
+| `LOG_LEVEL` | Log verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`) | `DEBUG` |
+| `SECRET_KEY` | Application secret (change in production) | `change-me-in-production` |
+| `SERVICE_NAME` | Service name included in structured logs | `e-bank-api` |
+| `IDEMPOTENCY_ENABLED` | Enable Redis-backed idempotency layer | `true` |
+| `IDEMPOTENCY_EXCLUDE_PATHS` | Comma-separated paths skipped by idempotency middleware | `/health,/metrics,/reset` |
+| `REDIS_URL` | Redis connection URL | `redis://redis:6379/0` |
+| `REDIS_TTL_PROCESSING` | Idempotency lock TTL in seconds | `30` |
+| `REDIS_TTL_COMPLETED` | Idempotency cache TTL in seconds | `86400` |
+
 ## Run the project
 
 **The API must be running before you call it.** `curl` or the test suite will fail with *Could not connect to server* if nothing is listening on port 3000.
@@ -108,14 +154,21 @@ In the terminal where uvicorn is running, press **Ctrl+C**.
 
 ## Run with Docker
 
-Requires [Docker](https://docs.docker.com/get-docker/) installed.
+Requires [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/) installed.
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+The stack starts the API on port **8000** with Redis on the internal `app-network`. Open [http://localhost:8000/docs](http://localhost:8000/docs) to try the API.
+
+For a single image build without Compose:
 
 ```bash
 docker build -t e-bank-api .
-docker run --rm -p 3000:3000 e-bank-api
+docker run --rm -p 8000:8000 -e REDIS_URL=redis://host.docker.internal:6379/0 e-bank-api
 ```
-
-The image installs only runtime dependencies from `requirements.txt` and starts uvicorn on port **3000**. Open [http://localhost:3000/docs](http://localhost:3000/docs) to try the API.
 
 ## Running tests
 
@@ -203,6 +256,10 @@ e-bank-api/
 ├── requirements.txt      # Runtime (API + Docker)
 ├── requirements-dev.txt  # Runtime + test tools
 ├── Dockerfile
+├── docker-compose.yml
+├── docker-compose.prod.yml
+├── redis/redis.conf
+├── .env.example
 ├── .dockerignore
 └── pytest.ini
 ```

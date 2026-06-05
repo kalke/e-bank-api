@@ -1,8 +1,12 @@
-.PHONY: help setup run test lint lint-ci ci docker-up docker-down restart
+.PHONY: help setup run test lint lint-ci ci \
+	ensure-env docker-config docker-build docker-up docker-down docker-restart \
+	docker-logs docker-debug docker-prod restart
 
-IMAGE_NAME := e-bank-api
-CONTAINER_NAME := e-bank-api
+COMPOSE := docker compose
+COMPOSE_PROD := $(COMPOSE) -f docker-compose.yml -f docker-compose.prod.yml
+
 PORT := 3000
+DOCKER_PORT := 8000
 HOST := 0.0.0.0
 
 VENV := .venv
@@ -15,16 +19,24 @@ RUFF := $(VENV)/bin/ruff
 help:
 	@echo "Usage: make <target>"
 	@echo ""
-	@echo "Targets:"
-	@echo "  setup        Create venv and install dev dependencies"
-	@echo "  run          Start API locally with hot reload (port $(PORT))"
-	@echo "  test         Run test suite"
-	@echo "  lint         Run ruff (auto-fix + format) on app/ and tests/"
-	@echo "  lint-ci      Run ruff checks only (no modifications, for CI)"
-	@echo "  ci           Run lint-ci and test"
-	@echo "  docker-up    Build image and start container in background"
-	@echo "  docker-down  Stop and remove container"
-	@echo "  restart      Restart Docker container (down + up)"
+	@echo "Local development:"
+	@echo "  setup          Create venv and install dev dependencies"
+	@echo "  run            Start API locally with hot reload (port $(PORT))"
+	@echo "  test           Run test suite"
+	@echo "  lint           Run ruff (auto-fix + format) on app/ and tests/"
+	@echo "  lint-ci        Run ruff checks only (no modifications, for CI)"
+	@echo "  ci             Run lint-ci and test"
+	@echo ""
+	@echo "Docker Compose (API + Redis on port $(DOCKER_PORT)):"
+	@echo "  docker-up      Start stack in background"
+	@echo "  docker-down    Stop and remove stack"
+	@echo "  docker-restart Restart stack"
+	@echo "  docker-build   Build compose images"
+	@echo "  docker-config  Validate compose configuration"
+	@echo "  docker-logs    Follow compose logs"
+	@echo "  docker-debug   Start stack with Redis Commander (port 8081)"
+	@echo "  docker-prod    Start production stack (4 workers)"
+	@echo "  restart        Alias for docker-restart"
 
 setup:
 	python -m venv $(VENV)
@@ -46,17 +58,33 @@ lint-ci: $(RUFF)
 
 ci: lint-ci test
 
-docker-build:
-	docker build -t $(IMAGE_NAME) .
+ensure-env:
+	@test -f .env || cp .env.example .env
 
-docker-up: docker-build
-	-docker rm -f $(CONTAINER_NAME) 2>/dev/null
-	docker run -d --name $(CONTAINER_NAME) -p $(PORT):3000 $(IMAGE_NAME)
+docker-config: ensure-env
+	$(COMPOSE) config
+
+docker-build: ensure-env
+	$(COMPOSE) build
+
+docker-up: ensure-env
+	$(COMPOSE) up --build -d
 
 docker-down:
-	-docker rm -f $(CONTAINER_NAME)
+	$(COMPOSE) down
 
-restart: docker-down docker-up
+docker-restart: docker-down docker-up
+
+restart: docker-restart
+
+docker-logs:
+	$(COMPOSE) logs -f
+
+docker-debug: ensure-env
+	$(COMPOSE) --profile debug up --build
+
+docker-prod: ensure-env
+	$(COMPOSE_PROD) up --build -d
 
 $(VENV)/bin/%:
 	@test -d $(VENV) || (echo "Run 'make setup' first." && exit 1)
