@@ -1,4 +1,4 @@
-.PHONY: help setup run test lint docker-up docker-down restart
+.PHONY: help setup run test lint lint-ci ci docker-up docker-down restart
 
 IMAGE_NAME := e-bank-api
 CONTAINER_NAME := e-bank-api
@@ -20,6 +20,8 @@ help:
 	@echo "  run          Start API locally with hot reload (port $(PORT))"
 	@echo "  test         Run test suite"
 	@echo "  lint         Run ruff (auto-fix + format) on app/ and tests/"
+	@echo "  lint-ci      Run ruff checks only (no modifications, for CI)"
+	@echo "  ci           Run lint-ci and test"
 	@echo "  docker-up    Build image and start container in background"
 	@echo "  docker-down  Stop and remove container"
 	@echo "  restart      Restart Docker container (down + up)"
@@ -37,6 +39,12 @@ test: $(PYTEST)
 lint: $(RUFF)
 	$(RUFF) check --fix app tests
 	$(RUFF) format app tests
+
+lint-ci: $(RUFF)
+	$(RUFF) check app tests
+	$(RUFF) format --check app tests
+
+ci: lint-ci test
 
 docker-build:
 	docker build -t $(IMAGE_NAME) .
