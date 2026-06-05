@@ -17,8 +17,10 @@ From the project root:
 cd e-bank-api
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
+
+`requirements-dev.txt` includes runtime dependencies plus test tools (`pytest`, `httpx2`). For production or Docker, use `requirements.txt` only.
 
 ### Troubleshooting (Ubuntu / Debian / WSL)
 
@@ -32,7 +34,7 @@ sudo apt install python-is-python3 python3.14-venv python3-pip
 rm -rf .venv
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
 
 - **`python-is-python3`** — makes `python` point to Python 3 (required on many Ubuntu/WSL installs).
@@ -86,7 +88,7 @@ curl "http://localhost:3000/balance?account_id=100"
 Expected:
 
 - `POST /reset` → HTTP 200, body `OK`
-- `GET /balance` for a missing account → HTTP 404, body `0`
+- `GET /balance` for a missing account → HTTP 404, JSON `{"message": "Account 100 not found"}`
 
 Example flow with a deposit:
 
@@ -104,12 +106,23 @@ Last line should return `10`.
 
 In the terminal where uvicorn is running, press **Ctrl+C**.
 
-## Running tests
+## Run with Docker
 
-With the virtual environment activated:
+Requires [Docker](https://docs.docker.com/get-docker/) installed.
 
 ```bash
-pip install -r requirements.txt
+docker build -t e-bank-api .
+docker run --rm -p 3000:3000 e-bank-api
+```
+
+The image installs only runtime dependencies from `requirements.txt` and starts uvicorn on port **3000**. Open [http://localhost:3000/docs](http://localhost:3000/docs) to try the API.
+
+## Running tests
+
+With the virtual environment activated and dev dependencies installed:
+
+```bash
+pip install -r requirements-dev.txt
 pytest -v
 ```
 
@@ -128,7 +141,7 @@ Clears all accounts. Returns **200** with body **`OK`** (plain text).
 | Condition | Status | Body |
 |-----------|--------|------|
 | Account exists | 200 | Plain text balance (e.g. `20`) |
-| Account does not exist | 404 | `0` |
+| Account does not exist | 404 | `{"message": "Account {id} not found"}` |
 
 Read-only: this endpoint does not modify state.
 
@@ -155,8 +168,8 @@ Request body is JSON. The `type` field determines required fields.
 | Result | Status | Body |
 |--------|--------|------|
 | Success | 201 | `{"origin": {"id": "100", "balance": 15}}` |
-| Unknown account | 404 | `0` |
-| Insufficient funds | 400 | `0` |
+| Unknown account | 404 | `{"message": "Account {id} not found"}` |
+| Insufficient funds | 400 | `{"message": "Account {id} has insufficient funds"}` |
 
 #### Transfer
 
@@ -167,8 +180,8 @@ Request body is JSON. The `type` field determines required fields.
 | Result | Status | Body |
 |--------|--------|------|
 | Success (creates destination if needed) | 201 | `{"origin": {"id": "...", "balance": ...}, "destination": {"id": "...", "balance": ...}}` |
-| Unknown origin | 404 | `0` |
-| Insufficient funds | 400 | `0` |
+| Unknown origin | 404 | `{"message": "Account {id} not found"}` |
+| Insufficient funds | 400 | `{"message": "Account {id} has insufficient funds"}` |
 
 Transfers are atomic: origin and destination balances are updated together after validation; failed transfers leave state unchanged.
 
@@ -187,7 +200,10 @@ e-bank-api/
 ├── tests/
 │   ├── test_api.py       # HTTP integration tests
 │   └── test_services.py  # Unit tests for business logic
-├── requirements.txt
+├── requirements.txt      # Runtime (API + Docker)
+├── requirements-dev.txt  # Runtime + test tools
+├── Dockerfile
+├── .dockerignore
 └── pytest.ini
 ```
 
@@ -207,20 +223,22 @@ Sufficient for the challenge scope. No database setup is required for reviewers 
 
 ### `requirements.txt` instead of Poetry
 
-This project uses **`requirements.txt`** rather than Poetry (or similar) because:
+This project uses **`requirements.txt`** / **`requirements-dev.txt`** rather than Poetry (or similar) because:
 
-1. **Minimal setup** — reviewers and CI can run `pip install -r requirements.txt` with no extra tooling.
+1. **Minimal setup** — reviewers and CI can run `pip install -r requirements-dev.txt` with no extra tooling.
 2. **Challenge scope** — few dependencies; a lockfile and workspace tooling add little value here.
-3. **Alignment with simplicity** — the assignment emphasizes correct behavior and clear code over infrastructure.
+3. **Runtime vs dev split** — `requirements.txt` powers the API and Docker image; `requirements-dev.txt` adds `pytest` and `httpx2` for local development and CI.
 
 For a larger production service or a team repo, **Poetry** or **uv** with a lockfile would be appropriate for reproducible installs and dev/prod dependency groups.
 
 ### Error responses
 
-Business failures return plain text body **`0`** (not JSON), matching the challenge examples:
+Business failures return JSON with a **`message`** field and the appropriate HTTP status:
 
-- Missing account: **404**
-- Insufficient funds: **400**
+- Missing account: **404** — e.g. `{"message": "Account 100 not found"}`
+- Insufficient funds: **400** — e.g. `{"message": "Account 100 has insufficient funds"}`
+
+Domain exceptions are mapped globally in `main.py` via a FastAPI exception handler.
 
 ### Other guarantees
 
@@ -230,12 +248,12 @@ Business failures return plain text body **`0`** (not JSON), matching the challe
 
 ## Dependencies
 
-| Package | Purpose |
-|---------|---------|
-| fastapi | HTTP API |
-| uvicorn | ASGI server |
-| pydantic | Request schemas |
-| pytest | Tests |
-| httpx | Test client (via Starlette/FastAPI) |
+| Package | Purpose | File |
+|---------|---------|------|
+| fastapi | HTTP API | `requirements.txt` |
+| uvicorn | ASGI server | `requirements.txt` |
+| pydantic | Request schemas | `requirements.txt` |
+| pytest | Tests | `requirements-dev.txt` |
+| httpx2 | Test client | `requirements-dev.txt` |
 
-See [requirements.txt](requirements.txt) for version constraints.
+See [requirements.txt](requirements.txt) and [requirements-dev.txt](requirements-dev.txt) for version constraints.

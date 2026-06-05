@@ -11,6 +11,8 @@ class Account:
 
 
 class AccountService:
+    OVERDRAFT_LIMIT = -1000
+
     def __init__(self, store: InMemoryStore) -> None:
         self._store = store
 
@@ -35,19 +37,19 @@ class AccountService:
         current = self._store.get_balance(origin)
         if current is None:
             raise AccountNotFound(origin)
-        if current < amount:
-            raise InsufficientFunds(origin)
+        self._validate_limit(origin, current, amount)
         new_balance = current - amount
         self._store.set_balance(origin, new_balance)
         return Account(id=origin, balance=new_balance)
 
-    def transfer(self, origin: str, destination: str, amount: int) -> tuple[Account, Account]:
+    def transfer(
+        self, origin: str, destination: str, amount: int
+    ) -> tuple[Account, Account]:
         self._validate_amount(amount)
         origin_balance = self._store.get_balance(origin)
         if origin_balance is None:
             raise AccountNotFound(origin)
-        if origin_balance < amount:
-            raise InsufficientFunds(origin)
+        self._validate_limit(origin, origin_balance, amount)
 
         dest_balance = self._store.get_balance(destination) or 0
         new_origin_balance = origin_balance - amount
@@ -65,3 +67,7 @@ class AccountService:
     def _validate_amount(amount: int) -> None:
         if amount <= 0:
             raise InvalidAmount(amount)
+
+    def _validate_limit(self, origin: str, current: int, amount: int) -> None:
+        if current - amount < self.OVERDRAFT_LIMIT:
+            raise InsufficientFunds(origin)

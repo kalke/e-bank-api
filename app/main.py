@@ -50,9 +50,7 @@ def event(body: EventIn) -> Response:
             status_code=201,
             content={"origin": _account_out(account)},
         )
-    origin, destination = service.transfer(
-        body.origin, body.destination, body.amount
-    )
+    origin, destination = service.transfer(body.origin, body.destination, body.amount)
     return JSONResponse(
         status_code=201,
         content={

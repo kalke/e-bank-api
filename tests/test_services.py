@@ -46,7 +46,7 @@ def test_withdraw_insufficient_funds_does_not_change_balance(
 ) -> None:
     service.deposit("100", 5)
     with pytest.raises(InsufficientFunds):
-        service.withdraw("100", 10)
+        service.withdraw("100", 1006)
     assert service.get_balance("100") == 5
 
 
@@ -70,7 +70,7 @@ def test_transfer_insufficient_funds_does_not_change_state(
 ) -> None:
     service.deposit("100", 5)
     with pytest.raises(InsufficientFunds):
-        service.transfer("100", "300", 15)
+        service.transfer("100", "300", 1006)
     assert service.get_balance("100") == 5
     with pytest.raises(AccountNotFound):
         service.get_balance("300")
@@ -112,5 +112,22 @@ def test_transfer_adds_to_existing_destination_balance(
 def test_insufficient_funds_carries_account_id(service: AccountService) -> None:
     service.deposit("100", 3)
     with pytest.raises(InsufficientFunds) as exc_info:
-        service.withdraw("100", 10)
+        service.withdraw("100", 1004)
     assert exc_info.value.account_id == "100"
+
+
+def test_transfer_allows_negative_balance_up_to_overdraft_limit(
+    service: AccountService,
+) -> None:
+    service.deposit("100", 50)
+    origin, destination = service.transfer("100", "300", 1050)
+    assert origin.balance == -1000
+    assert destination.balance == 1050
+
+
+def test_withdraw_allows_negative_balance_up_to_overdraft_limit(
+    service: AccountService,
+) -> None:
+    service.deposit("100", 100)
+    result = service.withdraw("100", 1100)
+    assert result.balance == -1000

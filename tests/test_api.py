@@ -84,7 +84,7 @@ def test_insufficient_funds_withdraw() -> None:
 
     response = client.post(
         "/event",
-        json={"type": "withdraw", "origin": "100", "amount": 10},
+        json={"type": "withdraw", "origin": "100", "amount": 1006},
     )
     assert response.status_code == 400
     assert response.json() == {"message": "Account 100 has insufficient funds"}
@@ -105,7 +105,7 @@ def test_insufficient_funds_transfer() -> None:
         json={
             "type": "transfer",
             "origin": "100",
-            "amount": 15,
+            "amount": 1006,
             "destination": "300",
         },
     )
@@ -117,6 +117,42 @@ def test_insufficient_funds_transfer() -> None:
 
     dest = client.get("/balance", params={"account_id": "300"})
     assert dest.status_code == 404
+
+
+def test_transfer_allows_overdraft_up_to_limit() -> None:
+    client.post(
+        "/event",
+        json={"type": "deposit", "destination": "100", "amount": 50},
+    )
+
+    response = client.post(
+        "/event",
+        json={
+            "type": "transfer",
+            "origin": "100",
+            "amount": 1050,
+            "destination": "300",
+        },
+    )
+    assert response.status_code == 201
+    assert response.json() == {
+        "origin": {"id": "100", "balance": -1000},
+        "destination": {"id": "300", "balance": 1050},
+    }
+
+
+def test_withdraw_allows_overdraft_up_to_limit() -> None:
+    client.post(
+        "/event",
+        json={"type": "deposit", "destination": "100", "amount": 100},
+    )
+
+    response = client.post(
+        "/event",
+        json={"type": "withdraw", "origin": "100", "amount": 1100},
+    )
+    assert response.status_code == 201
+    assert response.json() == {"origin": {"id": "100", "balance": -1000}}
 
 
 def test_reset_clears_state() -> None:
