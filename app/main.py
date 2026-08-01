@@ -3,7 +3,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import redis.asyncio as redis
-from fastapi import Depends, FastAPI, Query, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
@@ -28,12 +28,38 @@ logger = get_logger(__name__)
 
 IDEMPOTENCY_ENABLED = os.getenv("IDEMPOTENCY_ENABLED", "false").lower() == "true"
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+ENV_NAME = os.getenv("ENV", "development").lower()
+IS_PRODUCTION = ENV_NAME in {"production", "prod"}
+_RESET_DEFAULT = "false" if IS_PRODUCTION else "true"
+RESET_ENABLED = os.getenv("RESET_ENABLED", _RESET_DEFAULT).lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
+
+def _cors_origins() -> list[str]:
+    raw = os.getenv("CORS_ORIGINS")
+    if raw is None:
+        if IS_PRODUCTION:
+            return ["https://kalke.dev", "https://www.kalke.dev"]
+        return [
+            "https://kalke.dev",
+            "https://www.kalke.dev",
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ]
+    return [o.strip() for o in raw.split(",") if o.strip()]
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     redis_client: redis.Redis | None = None
     idempotency_service: IdempotencyService | None = None
+
+    if IS_PRODUCTION and not oidc_enabled():
+        raise RuntimeError("OIDC_ENABLED must be true when ENV=production")
 
     await check_database_connection()
     logger.info("database_connected")
@@ -65,7 +91,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.idempotency_service = idempotency_service
     set_idempotency_service(idempotency_service)
 
-    logger.info("application_startup", status="ready")
+    logger.info("application_startup", status="ready", env=ENV_NAME)
     try:
         yield
     finally:
@@ -75,24 +101,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("application_shutdown", status="stopped")
 
 
-app = FastAPI(title="E-Bank API", lifespan=lifespan)
+app = FastAPI(
+    title="E-Bank API",
+    lifespan=lifespan,
+    docs_url=None if IS_PRODUCTION else "/docs",
+    redoc_url=None if IS_PRODUCTION else "/redoc",
+    openapi_url=None if IS_PRODUCTION else "/openapi.json",
+)
 app.add_middleware(IdempotencyMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
-
-_cors_origins = [
-    o.strip()
-    for o in os.getenv(
-        "CORS_ORIGINS",
-        "https://kalke.dev,https://www.kalke.dev,http://localhost:5173,http://127.0.0.1:5173",
-    ).split(",")
-    if o.strip()
-]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_cors_origins,
+    allow_origins=_cors_origins(),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Idempotency-Key"],
 )
 
 
@@ -204,6 +227,8 @@ async def reset(
     db: AsyncSession = Depends(get_db),
     _auth: Principal | None = Depends(require_bank_write),
 ) -> PlainTextResponse:
+    if not RESET_ENABLED:
+        raise HTTPException(status_code=404, detail={"message": "not found"})
     await _service(db).reset()
     return PlainTextResponse(content="OK", status_code=200)
 
