@@ -50,7 +50,7 @@ class AccountRepository:
                 initial_balance,
                 "deposit",
             )
-        return AccountRecord(id=account_id, balance=Decimal("0"))
+        return AccountRecord(id=account_id, balance=Decimal(0))
 
     async def record_transaction(
         self,

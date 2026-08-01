@@ -6,6 +6,7 @@ target-version = "py312"
 ignore = [
     "D",       # docstrings (módulo, classe, função, etc.)
     "ANN",     # type hints obrigatórios
+    "B008",    # Depends()/Query() in defaults — FastAPI idiom
     "COM812",  # vírgula final (conflita com o formatter)
     "ISC001",  # concatenação implícita de strings (conflita com o formatter)
     "N818",    # exceções devem terminar em Error

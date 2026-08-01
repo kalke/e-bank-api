@@ -249,7 +249,7 @@ class IdempotencyService:
         self,
         key: str,
         status_code: int,
-        response_body: dict[str, Any] | list[Any] | str | int | float | None,
+        response_body: dict[str, Any] | list[Any] | str | float | None,
     ) -> None:
         existing = await self.check(key)
         attempt_count = existing.attempt_count if existing else 1
