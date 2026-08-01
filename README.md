@@ -1,7 +1,5 @@
 # E-Bank API
 
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-
 Small FastAPI bank API: reset state, query balance, and process deposit / withdraw / transfer events. Postgres for persistence, Redis for optional idempotency, OIDC via sibling [`kalke-auth`](https://github.com/kalke/kalke-auth).
 
 Interactive docs at **`/docs`** when the server is running. Hosted sandbox: [kalke.dev](https://kalke.dev) (login required).
