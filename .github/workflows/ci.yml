@@ -101,8 +101,10 @@ jobs:
             REDIS_URL
             OIDC_ISSUER
             OIDC_AUDIENCE
+            INTROSPECT_SECRET
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           REDIS_URL: ${{ secrets.REDIS_URL }}
           OIDC_ISSUER: ${{ secrets.OIDC_ISSUER }}
           OIDC_AUDIENCE: ${{ secrets.OIDC_AUDIENCE }}
+          INTROSPECT_SECRET: ${{ secrets.INTROSPECT_SECRET }}

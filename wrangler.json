@@ -14,6 +14,7 @@
 		"OIDC_ENABLED": "true",
 		"IDEMPOTENCY_ENABLED": "true",
 		"RESET_ENABLED": "false",
+		"AUTH_INTROSPECT_URL": "https://auth.kalke.dev/v1/introspect",
 		"CORS_ORIGINS": "https://kalke.dev,https://www.kalke.dev",
 		"LOG_LEVEL": "INFO",
 		"ENV": "production"

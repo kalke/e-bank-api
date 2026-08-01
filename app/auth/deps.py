@@ -12,10 +12,16 @@ def _bearer_token(request: Request) -> str:
     return header[7:].strip()
 
 
-async def require_principal(request: Request) -> Principal | None:
+async def require_principal(request: Request) -> Principal:
+    """Require a valid JWT or PAT. OIDC off is allowed only outside production (tests)."""
     authenticator = get_authenticator()
     if authenticator is None:
-        return None
+        # Production refuses to start with OIDC_ENABLED=false (see app.main lifespan).
+        return Principal(
+            subject="local-test",
+            client="test",
+            permissions=["bank:write"],
+        )
     try:
         return authenticator.authenticate(_bearer_token(request))
     except AuthError as exc:
@@ -23,10 +29,8 @@ async def require_principal(request: Request) -> Principal | None:
 
 
 async def require_bank_write(
-    principal: Principal | None = Depends(require_principal),
-) -> Principal | None:
-    if principal is None:
-        return None
+    principal: Principal = Depends(require_principal),
+) -> Principal:
     if not principal.has_permission("bank:write"):
         raise HTTPException(
             status_code=403,

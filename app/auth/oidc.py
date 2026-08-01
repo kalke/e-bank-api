@@ -5,8 +5,9 @@ import os
 import threading
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse, urlunparse
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import jwt
 from jwt import PyJWKClient
@@ -35,6 +36,8 @@ class OIDCAuthenticator:
         issuer: str,
         audience: str,
         discovery_url: str | None = None,
+        introspect_url: str | None = None,
+        introspect_secret: str | None = None,
     ) -> None:
         self.issuer = issuer.rstrip("/")
         self.audience = audience
@@ -45,11 +48,18 @@ class OIDCAuthenticator:
         if discovery_url:
             jwks_uri = _rewrite_origin(jwks_uri, discovery)
         self._jwks = PyJWKClient(jwks_uri, cache_keys=True)
+        self.introspect_url = (introspect_url or "").strip()
+        self.introspect_secret = (introspect_secret or "").strip()
 
     def authenticate(self, bearer_token: str) -> Principal:
         token = bearer_token.strip()
         if not token:
             raise AuthError()
+        if token.startswith("kalke_"):
+            return self._authenticate_pat(token)
+        return self._authenticate_jwt(token)
+
+    def _authenticate_jwt(self, token: str) -> Principal:
         try:
             key = self._jwks.get_signing_key_from_jwt(token)
             claims = jwt.decode(
@@ -73,6 +83,38 @@ class OIDCAuthenticator:
             client=str(claims.get("azp") or "").strip(),
             email=str(claims.get("email") or "").strip(),
             permissions=permissions,
+        )
+
+    def _authenticate_pat(self, token: str) -> Principal:
+        if not self.introspect_url or not self.introspect_secret:
+            raise AuthError()
+        body = json.dumps({"token": token}).encode()
+        req = Request(
+            self.introspect_url,
+            data=body,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "X-Kalke-Introspect-Key": self.introspect_secret,
+            },
+        )
+        try:
+            with urlopen(req, timeout=10) as resp:
+                doc: dict[str, Any] = json.loads(resp.read().decode())
+        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+            raise AuthError() from exc
+
+        if not doc.get("active") or not str(doc.get("sub") or "").strip():
+            raise AuthError()
+
+        permissions = doc.get("permissions")
+        if not isinstance(permissions, list):
+            permissions = []
+        return Principal(
+            subject=str(doc["sub"]).strip(),
+            client="kalke-pat",
+            email=str(doc.get("email") or "").strip(),
+            permissions=[str(p) for p in permissions],
         )
 
 
@@ -100,7 +142,15 @@ def get_authenticator() -> OIDCAuthenticator | None:
                 "OIDC_ISSUER and OIDC_AUDIENCE are required when OIDC_ENABLED=true"
             )
         discovery = os.getenv("OIDC_DISCOVERY_URL", "").strip() or None
-        _authenticator = OIDCAuthenticator(issuer, audience, discovery)
+        introspect_url = os.getenv("AUTH_INTROSPECT_URL", "").strip() or None
+        introspect_secret = os.getenv("INTROSPECT_SECRET", "").strip() or None
+        _authenticator = OIDCAuthenticator(
+            issuer,
+            audience,
+            discovery,
+            introspect_url,
+            introspect_secret,
+        )
         return _authenticator
 
 

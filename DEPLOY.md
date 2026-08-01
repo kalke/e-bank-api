@@ -20,10 +20,14 @@ postgresql+asyncpg://user:pass@ep-xxx.region.aws.neon.tech/e_bank?sslmode=requir
 1. Create a Redis database.
 2. Copy the `rediss://…` URL → `REDIS_URL`.
 
-## 3. OIDC
+## 3. Auth (OIDC + PAT)
 
 Issuer: `https://auth.kalke.dev/realms/kalke`  
 Audience: `e-bank-api`
+
+All mutating/read API routes require `Authorization: Bearer <jwt|kalke_…>` with
+`bank:write`. PATs are validated via kalke-auth introspect (same
+`INTROSPECT_SECRET` as auth). Public surface is `GET /health` only.
 
 Deploy [kalke-auth](https://github.com/kalke/kalke-auth) first.
 
@@ -37,18 +41,20 @@ Deploy [kalke-auth](https://github.com/kalke/kalke-auth) first.
 | `REDIS_URL` | `rediss://…` |
 | `OIDC_ISSUER` | `https://auth.kalke.dev/realms/kalke` |
 | `OIDC_AUDIENCE` | `e-bank-api` |
+| `INTROSPECT_SECRET` | same value as kalke-auth |
 
 ## 5. Deploy
 
 Push to `main` after PR merge. Manual:
 
 ```bash
-cd worker && npm ci && cd ..
+npm ci
 npx wrangler secret put DATABASE_URL
 npx wrangler secret put REDIS_URL
 npx wrangler secret put OIDC_ISSUER
 npx wrangler secret put OIDC_AUDIENCE
-npm --prefix worker run deploy
+npx wrangler secret put INTROSPECT_SECRET
+npx wrangler deploy
 ```
 
 ## 6. Branch protection

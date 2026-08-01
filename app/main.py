@@ -225,7 +225,7 @@ def health() -> dict[str, str]:
 @app.post("/reset")
 async def reset(
     db: AsyncSession = Depends(get_db),
-    _auth: Principal | None = Depends(require_bank_write),
+    _auth: Principal = Depends(require_bank_write),
 ) -> PlainTextResponse:
     if not RESET_ENABLED:
         raise HTTPException(status_code=404, detail={"message": "not found"})
@@ -237,7 +237,7 @@ async def reset(
 async def balance(
     account_id: str = Query(...),
     db: AsyncSession = Depends(get_db),
-    _auth: Principal | None = Depends(require_bank_write),
+    _auth: Principal = Depends(require_bank_write),
 ) -> PlainTextResponse:
     value = await _service(db).get_balance(account_id)
     return PlainTextResponse(content=str(value), status_code=200)
@@ -247,7 +247,7 @@ async def balance(
 async def event(
     body: EventIn,
     db: AsyncSession = Depends(get_db),
-    _auth: Principal | None = Depends(require_bank_write),
+    _auth: Principal = Depends(require_bank_write),
 ) -> Response:
     service = _service(db)
     if body.type == "deposit":
