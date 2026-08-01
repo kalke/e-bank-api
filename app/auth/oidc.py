@@ -136,10 +136,11 @@ def _rewrite_origin(raw: str, origin_base: str) -> str:
 
 
 def _permissions_from_claims(claims: dict[str, Any]) -> list[str]:
+    """Fail closed: never invent write access when claims are empty."""
     permissions = claims.get("permissions")
     if isinstance(permissions, list) and permissions:
         return [str(p) for p in permissions]
     scope = claims.get("scope")
     if isinstance(scope, str) and scope.strip():
         return scope.split()
-    return ["bank:write"]
+    return []
