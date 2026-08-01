@@ -3,18 +3,14 @@ line-length = 88
 target-version = "py312"
 
 [tool.ruff.lint]
+# Explicit select — ruff>=0.16 defaults are too broad for this codebase.
+select = ["E", "F", "I", "UP", "B", "SIM"]
 ignore = [
-    "D",       # docstrings (módulo, classe, função, etc.)
-    "ANN",     # type hints obrigatórios
     "B008",    # Depends()/Query() in defaults — FastAPI idiom
+    "B905",    # zip(strict=) — prefer current call sites
+    "SIM108",  # ternary vs if/else — readability preference
     "COM812",  # vírgula final (conflita com o formatter)
     "ISC001",  # concatenação implícita de strings (conflita com o formatter)
-    "N818",    # exceções devem terminar em Error
-    "ERA001",  # código comentado
-    "FIX",     # comentários FIXME
-    "TD",      # comentários TODO
-    "T20",     # print / breakpoint
-    "PLR2004", # valores "mágicos" em comparações
 ]
 
 [tool.ruff.lint.per-file-ignores]
