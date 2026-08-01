@@ -1,14 +1,14 @@
 {
   "info": {
     "_postman_id": "ebanx-bank-api-collection",
-    "name": "EBANX Bank API",
-    "description": "Bank account API for the EBANX technical challenge.\n\n**Before importing:** start the server (`uvicorn app.main:app --host 0.0.0.0 --port 3000 --reload`).\n\n**Import:** Postman → Import → select this file and `EBANX-Bank-API.postman_environment.json` → activate environment **EBANX Bank API - Local**.\n\n**ngrok:** set `baseUrl` to your HTTPS forwarding URL (e.g. `https://xxxx.ngrok-free.app`).",
+    "name": "E-Bank API",
+    "description": "Kalke E-Bank API (deposit / withdraw / transfer).\n\n**Before importing:** `make up-all` (API on :8000, OIDC via kalke-auth).\n\n**Auth:** set collection/environment `token` from `make auth-token` and add header `Authorization: Bearer {{token}}`.\n\n**Import:** Postman → Import → this file + `EBANX-Bank-API.postman_environment.json`.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     {
       "key": "baseUrl",
-      "value": "http://localhost:3000"
+      "value": "http://localhost:8000"
     }
   ],
   "item": [

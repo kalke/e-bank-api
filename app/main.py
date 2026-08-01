@@ -1,14 +1,17 @@
 import os
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 import redis.asyncio as redis
-from fastapi import Depends, FastAPI, Query, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.auth.deps import require_bank_write
+from app.auth.oidc import Principal, get_authenticator, oidc_enabled
 from app.core.database import check_database_connection, get_db
 from app.core.exceptions import DuplicateRequestException, IdempotencyStorageException
 from app.core.idempotency import IdempotencyService, set_idempotency_service
@@ -25,6 +28,29 @@ logger = get_logger(__name__)
 
 IDEMPOTENCY_ENABLED = os.getenv("IDEMPOTENCY_ENABLED", "false").lower() == "true"
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+ENV_NAME = os.getenv("ENV", "development").lower()
+IS_PRODUCTION = ENV_NAME in {"production", "prod"}
+_RESET_DEFAULT = "false" if IS_PRODUCTION else "true"
+RESET_ENABLED = os.getenv("RESET_ENABLED", _RESET_DEFAULT).lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
+
+def _cors_origins() -> list[str]:
+    raw = os.getenv("CORS_ORIGINS")
+    if raw is None:
+        if IS_PRODUCTION:
+            return ["https://kalke.dev", "https://www.kalke.dev"]
+        return [
+            "https://kalke.dev",
+            "https://www.kalke.dev",
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ]
+    return [o.strip() for o in raw.split(",") if o.strip()]
 
 
 @asynccontextmanager
@@ -32,8 +58,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     redis_client: redis.Redis | None = None
     idempotency_service: IdempotencyService | None = None
 
+    if IS_PRODUCTION and not oidc_enabled():
+        raise RuntimeError("OIDC_ENABLED must be true when ENV=production")
+
     await check_database_connection()
     logger.info("database_connected")
+
+    if oidc_enabled():
+        get_authenticator()
+        logger.info("oidc_enabled", audience=os.getenv("OIDC_AUDIENCE", ""))
+    else:
+        logger.warning("oidc_disabled")
 
     if IDEMPOTENCY_ENABLED:
         try:
@@ -56,7 +91,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.idempotency_service = idempotency_service
     set_idempotency_service(idempotency_service)
 
-    logger.info("application_startup", status="ready")
+    logger.info("application_startup", status="ready", env=ENV_NAME)
     try:
         yield
     finally:
@@ -66,9 +101,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("application_shutdown", status="stopped")
 
 
-app = FastAPI(title="EBANX Bank API", lifespan=lifespan)
+app = FastAPI(
+    title="E-Bank API",
+    lifespan=lifespan,
+    docs_url=None if IS_PRODUCTION else "/docs",
+    redoc_url=None if IS_PRODUCTION else "/redoc",
+    openapi_url=None if IS_PRODUCTION else "/openapi.json",
+)
 app.add_middleware(IdempotencyMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins(),
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Idempotency-Key"],
+)
 
 
 def _account_out(account: Account) -> dict[str, str | int]:
@@ -175,7 +223,12 @@ def health() -> dict[str, str]:
 
 
 @app.post("/reset")
-async def reset(db: AsyncSession = Depends(get_db)) -> PlainTextResponse:
+async def reset(
+    db: AsyncSession = Depends(get_db),
+    _auth: Principal | None = Depends(require_bank_write),
+) -> PlainTextResponse:
+    if not RESET_ENABLED:
+        raise HTTPException(status_code=404, detail={"message": "not found"})
     await _service(db).reset()
     return PlainTextResponse(content="OK", status_code=200)
 
@@ -184,13 +237,18 @@ async def reset(db: AsyncSession = Depends(get_db)) -> PlainTextResponse:
 async def balance(
     account_id: str = Query(...),
     db: AsyncSession = Depends(get_db),
+    _auth: Principal | None = Depends(require_bank_write),
 ) -> PlainTextResponse:
     value = await _service(db).get_balance(account_id)
     return PlainTextResponse(content=str(value), status_code=200)
 
 
 @app.post("/event")
-async def event(body: EventIn, db: AsyncSession = Depends(get_db)) -> Response:
+async def event(
+    body: EventIn,
+    db: AsyncSession = Depends(get_db),
+    _auth: Principal | None = Depends(require_bank_write),
+) -> Response:
     service = _service(db)
     if body.type == "deposit":
         account = await service.deposit(body.destination, body.amount)

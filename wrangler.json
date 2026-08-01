@@ -1,0 +1,43 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "e-bank-api",
+	"main": "src/index.ts",
+	"compatibility_date": "2025-10-08",
+	"compatibility_flags": ["nodejs_compat"],
+	"observability": {
+		"enabled": true
+	},
+	"routes": [
+		{ "pattern": "ebank.kalke.dev", "custom_domain": true }
+	],
+	"vars": {
+		"OIDC_ENABLED": "true",
+		"IDEMPOTENCY_ENABLED": "true",
+		"RESET_ENABLED": "false",
+		"CORS_ORIGINS": "https://kalke.dev,https://www.kalke.dev",
+		"LOG_LEVEL": "INFO",
+		"ENV": "production"
+	},
+	"containers": [
+		{
+			"class_name": "EBankContainer",
+			"image": "./Dockerfile",
+			"max_instances": 3,
+			"instance_type": "basic"
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "API",
+				"class_name": "EBankContainer"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": ["EBankContainer"]
+		}
+	]
+}

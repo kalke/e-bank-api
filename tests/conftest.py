@@ -11,10 +11,11 @@ os.environ.setdefault(
     "DATABASE_URL",
     os.getenv("DATABASE_URL_TEST", "sqlite+aiosqlite:///:memory:"),
 )
+os.environ["OIDC_ENABLED"] = "false"
 
-from app.core.database import Base, get_db  # noqa: E402
-from app.main import app  # noqa: E402
-from app.repositories.account_repository import AccountRepository  # noqa: E402
+from app.core.database import Base, get_db
+from app.main import app
+from app.repositories.account_repository import AccountRepository
 
 TEST_DATABASE_URL = os.environ["DATABASE_URL"]
 
