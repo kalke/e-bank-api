@@ -7,8 +7,8 @@ from fastapi.testclient import TestClient
 from structlog.testing import capture_logs
 
 from app.core.middleware import RequestLoggingMiddleware
-from app.main import handle_domain_error, handle_unhandled_exception
 from app.errors import AccountNotFound, DomainError
+from app.main import handle_domain_error, handle_unhandled_exception
 
 
 @pytest.fixture(autouse=True)

@@ -96,7 +96,9 @@ def get_authenticator() -> OIDCAuthenticator | None:
         issuer = os.getenv("OIDC_ISSUER", "").strip()
         audience = os.getenv("OIDC_AUDIENCE", "").strip()
         if not issuer or not audience:
-            raise RuntimeError("OIDC_ISSUER and OIDC_AUDIENCE are required when OIDC_ENABLED=true")
+            raise RuntimeError(
+                "OIDC_ISSUER and OIDC_AUDIENCE are required when OIDC_ENABLED=true"
+            )
         discovery = os.getenv("OIDC_DISCOVERY_URL", "").strip() or None
         _authenticator = OIDCAuthenticator(issuer, audience, discovery)
         return _authenticator
@@ -122,7 +124,14 @@ def _rewrite_origin(raw: str, origin_base: str) -> str:
     parsed = urlparse(raw)
     base = urlparse(origin_base)
     return urlunparse(
-        (base.scheme, base.netloc, parsed.path, parsed.params, parsed.query, parsed.fragment)
+        (
+            base.scheme,
+            base.netloc,
+            parsed.path,
+            parsed.params,
+            parsed.query,
+            parsed.fragment,
+        )
     )
 
 

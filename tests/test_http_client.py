@@ -60,9 +60,8 @@ class TestLoggedHttpClient:
         transport = httpx.MockTransport(handler)
         client = LoggedHttpClient(httpx.Client(transport=transport))
 
-        with capture_logs() as logs:
-            with pytest.raises(httpx.ConnectError):
-                client.get("https://api.example.com/down")
+        with capture_logs() as logs, pytest.raises(httpx.ConnectError):
+            client.get("https://api.example.com/down")
 
         failed = [e for e in logs if e.get("event") == "external_request_failed"]
         assert len(failed) == 1
