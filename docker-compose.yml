@@ -18,6 +18,10 @@ services:
       ENV: development
       LOG_LEVEL: DEBUG
       IDEMPOTENCY_ENABLED: "true"
+      OIDC_ENABLED: ${OIDC_ENABLED:-true}
+      OIDC_ISSUER: ${OIDC_ISSUER:-http://localhost:8443/realms/kalke}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE:-e-bank-api}
+      OIDC_DISCOVERY_URL: ${OIDC_DISCOVERY_URL:-http://caddy:8443/realms/kalke}
     volumes:
       - ./app:/app/app
     command: >
@@ -25,6 +29,7 @@ services:
              uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     networks:
       - app-network
+      - kalke-auth
 
   postgres:
     image: postgres:16-alpine
@@ -79,6 +84,9 @@ services:
 networks:
   app-network:
     driver: bridge
+  kalke-auth:
+    external: true
+    name: kalke-auth
 
 volumes:
   postgres_data:

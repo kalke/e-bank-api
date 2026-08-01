@@ -22,8 +22,10 @@ COPY --from=builder /root/.local /home/appuser/.local
 COPY app/ ./app/
 COPY alembic/ ./alembic/
 COPY alembic.ini ./
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 
-RUN chown -R appuser:appuser /app
+RUN chmod +x /app/docker-entrypoint.sh \
+    && chown -R appuser:appuser /app
 
 USER appuser
 
@@ -31,4 +33,5 @@ EXPOSE 8000
 
 HEALTHCHECK CMD curl -f http://localhost:8000/health || exit 1
 
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
