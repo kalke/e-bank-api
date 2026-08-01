@@ -60,7 +60,7 @@ class OIDCAuthenticator:
                 issuer=self.issuer,
                 options={"require": ["exp", "iat", "sub", "iss", "aud"]},
             )
-        except Exception as exc:  # noqa: BLE001 — map all JWT failures to 401
+        except Exception as exc:
             raise AuthError() from exc
 
         sub = str(claims.get("sub") or "").strip()
@@ -110,7 +110,7 @@ def reset_authenticator() -> None:
 
 def _discover(base: str) -> tuple[str, str]:
     url = f"{base}/.well-known/openid-configuration"
-    with urlopen(url, timeout=10) as resp:  # noqa: S310 — trusted IdP URL from env
+    with urlopen(url, timeout=10) as resp:
         doc: dict[str, Any] = json.loads(resp.read().decode())
     jwks = doc.get("jwks_uri")
     if not jwks:

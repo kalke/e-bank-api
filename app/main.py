@@ -1,6 +1,6 @@
 import os
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 import redis.asyncio as redis
 from fastapi import Depends, FastAPI, Query, Request, Response
