@@ -5,10 +5,13 @@ from typing import AsyncIterator
 import redis.asyncio as redis
 from fastapi import Depends, FastAPI, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.auth.deps import require_bank_write
+from app.auth.oidc import Principal, get_authenticator, oidc_enabled
 from app.core.database import check_database_connection, get_db
 from app.core.exceptions import DuplicateRequestException, IdempotencyStorageException
 from app.core.idempotency import IdempotencyService, set_idempotency_service
@@ -34,6 +37,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     await check_database_connection()
     logger.info("database_connected")
+
+    if oidc_enabled():
+        get_authenticator()
+        logger.info("oidc_enabled", audience=os.getenv("OIDC_AUDIENCE", ""))
+    else:
+        logger.warning("oidc_disabled")
 
     if IDEMPOTENCY_ENABLED:
         try:
@@ -66,9 +75,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("application_shutdown", status="stopped")
 
 
-app = FastAPI(title="EBANX Bank API", lifespan=lifespan)
+app = FastAPI(title="E-Bank API", lifespan=lifespan)
 app.add_middleware(IdempotencyMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
+
+_cors_origins = [
+    o.strip()
+    for o in os.getenv(
+        "CORS_ORIGINS",
+        "https://kalke.dev,https://www.kalke.dev,http://localhost:5173,http://127.0.0.1:5173",
+    ).split(",")
+    if o.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def _account_out(account: Account) -> dict[str, str | int]:
@@ -175,7 +200,10 @@ def health() -> dict[str, str]:
 
 
 @app.post("/reset")
-async def reset(db: AsyncSession = Depends(get_db)) -> PlainTextResponse:
+async def reset(
+    db: AsyncSession = Depends(get_db),
+    _auth: Principal | None = Depends(require_bank_write),
+) -> PlainTextResponse:
     await _service(db).reset()
     return PlainTextResponse(content="OK", status_code=200)
 
@@ -184,13 +212,18 @@ async def reset(db: AsyncSession = Depends(get_db)) -> PlainTextResponse:
 async def balance(
     account_id: str = Query(...),
     db: AsyncSession = Depends(get_db),
+    _auth: Principal | None = Depends(require_bank_write),
 ) -> PlainTextResponse:
     value = await _service(db).get_balance(account_id)
     return PlainTextResponse(content=str(value), status_code=200)
 
 
 @app.post("/event")
-async def event(body: EventIn, db: AsyncSession = Depends(get_db)) -> Response:
+async def event(
+    body: EventIn,
+    db: AsyncSession = Depends(get_db),
+    _auth: Principal | None = Depends(require_bank_write),
+) -> Response:
     service = _service(db)
     if body.type == "deposit":
         account = await service.deposit(body.destination, body.amount)

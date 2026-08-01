@@ -1,327 +1,120 @@
-# EBANX Bank API
+# E-Bank API
 
-In-memory bank account API for the EBANX technical challenge. It exposes three operations: reset state, query balance, and process financial events (deposit, withdraw, transfer).
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-With the server running, interactive documentation is available at **`/docs`** (Swagger UI), generated automatically by FastAPI.
+Small FastAPI bank API: reset state, query balance, and process deposit / withdraw / transfer events. Postgres for persistence, Redis for optional idempotency, OIDC via sibling [`kalke-auth`](https://github.com/kalke/kalke-auth).
 
-## Requirements
+Interactive docs at **`/docs`** when the server is running. Hosted sandbox: [kalke.dev](https://kalke.dev) (login required).
 
-- **Python 3.11+** (`python --version`)
-- **pip** and **venv** (standard library)
+## Quick start (Docker)
 
-## Setup (first time only)
+Prerequisites: [Docker](https://docs.docker.com/get-docker/) with Compose v2, and [Make](https://www.gnu.org/software/make/).
 
-From the project root:
-
-```bash
-cd e-bank-api
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements-dev.txt
-```
-
-`requirements-dev.txt` includes runtime dependencies plus test tools (`pytest`, `httpx2`). For production or Docker, use `requirements.txt` only.
-
-### Troubleshooting (Ubuntu / Debian / WSL)
-
-On Debian/Ubuntu, APT package names use the `python3` prefix, but this project uses the **`python`** command in all examples.
-
-If `python` is not found or `python -m venv .venv` fails with **ensurepip is not available**, run (adjust the venv package to your version, e.g. `python3.12-venv`):
+Sibling IdP: [`kalke-auth`](https://github.com/kalke/kalke-auth) next to this repo (shared Docker network `kalke-auth`).
 
 ```bash
-sudo apt update
-sudo apt install python-is-python3 python3.14-venv python3-pip
-rm -rf .venv
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements-dev.txt
+make setup                 # venv + .env (+ kalke-auth/.env if sibling exists)
+make setup-oidc            # OIDC_ISSUER / OIDC_AUDIENCE=e-bank-api
+make up-all                # Keycloak+Caddy + API+Postgres+Redis
+make smoke-oidc            # expect HTTP 422 (auth OK, validation failed)
 ```
 
-- **`python-is-python3`** — makes `python` point to Python 3 (required on many Ubuntu/WSL installs).
-- **`python3.14-venv`** — provides `venv` and `pip` for that Python version; use `python3.12-venv` or `python3.11-venv` if `python --version` differs.
-
-## Infrastructure
-
-### Services
-
-| Service | Port | Description |
-|---------|------|-------------|
-| FastAPI | 8000 | Main application |
-| PostgreSQL | 5432 | Primary database (accounts + transactions) |
-| Redis | 6379 | Idempotency cache + rate limiting (internal network only) |
-| Redis Commander | 8081 | Redis GUI (debug profile only) |
-
-### Running locally
+- API: `http://localhost:8000` (`/docs`)
+- IdP (host): `http://localhost:8443`
+- Inside Compose, the API reaches JWKS via `http://caddy:8443` (`OIDC_DISCOVERY_URL`) while JWT `iss` stays `http://localhost:8443/realms/kalke`.
 
 ```bash
-# Copy environment variables
-cp .env.example .env
-
-# Start all services
-docker compose up --build
-
-# Start with Redis GUI
-docker compose --profile debug up --build
-
-# Production mode
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up
+make docker-down / make down-all
+TOKEN=$(make -s auth-token)
+curl -sS -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"type":"deposit","destination":"100","amount":10}' \
+  http://localhost:8000/event
 ```
 
-### Redis config notes
+### Everyday Make targets
 
-- Max memory: 256mb with LRU eviction (safe for idempotency keys)
-- Persistence: AOF enabled with `everysec` fsync (balance between durability and performance)
-- Data is persisted in the `redis_data` named volume
+| Target | What it does |
+|---|---|
+| `make help` | List targets |
+| `make setup` | Create venv + `.env` |
+| `make setup-oidc` | Enable local OIDC_* pointing at kalke-auth |
+| `make up-all` | `auth-up` + API stack |
+| `make up` | API + Postgres + Redis (needs network `kalke-auth`) |
+| `make auth-up` / `auth-down` | Manage sibling kalke-auth |
+| `make auth-token` / `ebank-m2m-token` | Human / M2M JWT |
+| `make smoke-oidc` | Token → `POST /event` (expect 422) |
+| `make test` / `make lint` / `make ci` | Quality |
+| `make migrate` | Apply Alembic migrations |
 
-### Environment variables
+## Authentication and authorization
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `ENV` | Runtime environment (`development` or `production`) | `development` |
-| `LOG_LEVEL` | Log verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`) | `DEBUG` |
-| `SECRET_KEY` | Application secret (change in production) | `change-me-in-production` |
-| `SERVICE_NAME` | Service name included in structured logs | `e-bank-api` |
-| `IDEMPOTENCY_ENABLED` | Enable Redis-backed idempotency layer | `true` |
-| `IDEMPOTENCY_EXCLUDE_PATHS` | Comma-separated paths skipped by idempotency middleware | `/health,/metrics,/reset` |
-| `REDIS_URL` | Redis connection URL | `redis://redis:6379/0` |
-| `REDIS_TTL_PROCESSING` | Idempotency lock TTL in seconds | `30` |
-| `REDIS_TTL_COMPLETED` | Idempotency cache TTL in seconds | `86400` |
-| `DATABASE_URL` | PostgreSQL connection URL (asyncpg driver) | `postgresql+asyncpg://ebank:ebank@postgres:5432/ebank` |
-| `DATABASE_URL_TEST` | Test database URL (SQLite in-memory for local tests) | `sqlite+aiosqlite:///:memory:` |
-| `POSTGRES_USER` | PostgreSQL username | `ebank` |
-| `POSTGRES_PASSWORD` | PostgreSQL password | `ebank` |
-| `POSTGRES_DB` | PostgreSQL database name | `ebank` |
+| Item | Value |
+|---|---|
+| AuthN | `Authorization: Bearer <JWT>` (OIDC / RS256) |
+| Issuer | `OIDC_ISSUER` (must match JWT `iss`) |
+| Audience | `e-bank-api` |
+| AuthZ | access-token claim `permissions` must include `bank:write` or `admin` |
+| Public | `GET /health` only |
+| Protected | `GET /balance`, `POST /event`, `POST /reset` |
 
-### Database
+Local smoke clients: `kalke-cli` (password) and `ebank-m2m` (client credentials) from kalke-auth.
 
-- **Run migrations:** `make migrate`
-- **Create a new migration:** `make migration name="describe_change"`
-- **Access the DB shell:** `make db-shell`
-- Migrations run automatically on container startup (`alembic upgrade head` before uvicorn).
+Set `OIDC_ENABLED=false` only for unit tests (CI already does this).
 
-## Run the project
+## API
 
-**The API must be running before you call it.** `curl` or the test suite will fail with *Could not connect to server* if nothing is listening on port 3000.
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/health` | Liveness |
+| `GET` | `/balance?account_id=` | Balance (404 if missing) |
+| `POST` | `/event` | `{type, amount, origin?, destination?}` |
+| `POST` | `/reset` | Wipe accounts |
 
-### Step 1 — Start the server (keep this terminal open)
+## Configuration
 
-With the virtual environment activated:
+See [`.env.example`](.env.example). Important vars:
 
-```bash
-cd e-bank-api
-source .venv/bin/activate
-uvicorn app.main:app --host 0.0.0.0 --port 3000 --reload
-```
+| Var | Purpose |
+|---|---|
+| `DATABASE_URL` | Async SQLAlchemy URL (`postgresql+asyncpg://…`) |
+| `REDIS_URL` | Idempotency store |
+| `OIDC_ISSUER` / `OIDC_AUDIENCE` | JWT validation |
+| `OIDC_DISCOVERY_URL` | Reachable discovery/JWKS inside Docker |
+| `CORS_ORIGINS` | Browser sandbox origins |
 
-`--reload` restarts the server when you change Python files (useful during development or a live interview).
+## Cloudflare deploy
 
-You should see something like:
+Production target: **`ebank.kalke.dev`** (Workers + Containers) with Neon Postgres + Upstash Redis. See [DEPLOY.md](DEPLOY.md). Push to `main` runs CI then deploy.
+
+## Layout
 
 ```text
-INFO:     Uvicorn running on http://0.0.0.0:3000 (Press CTRL+C to quit)
-```
-
-Leave this process **running**. Do not close this terminal while you test the API.
-
-**Interactive docs:** open **[http://localhost:3000/docs](http://localhost:3000/docs)** in your browser to list every endpoint, view request/response schemas, and send test calls without writing `curl` commands.
-
-### Step 2 — Call the API
-
-#### Option A — Swagger UI (`/docs`)
-
-1. With the server running, go to [http://localhost:3000/docs](http://localhost:3000/docs).
-2. Try **POST /reset**, then **POST /event** (deposit / withdraw / transfer), then **GET /balance**.
-3. Request bodies and models match `app/schemas.py` (e.g. `EventIn`).
-
-Alternative layouts: [http://localhost:3000/redoc](http://localhost:3000/redoc) (ReDoc), [http://localhost:3000/openapi.json](http://localhost:3000/openapi.json) (OpenAPI JSON).
-
-#### Option B — `curl` (second terminal)
-
-Open **another** terminal and run:
-
-```bash
-curl -X POST http://localhost:3000/reset
-curl "http://localhost:3000/balance?account_id=100"
-```
-
-Expected:
-
-- `POST /reset` → HTTP 200, body `OK`
-- `GET /balance` for a missing account → HTTP 404, JSON `{"message": "Account 100 not found"}`
-
-Example flow with a deposit:
-
-```bash
-curl -X POST http://localhost:3000/reset
-curl -X POST http://localhost:3000/event \
-  -H "Content-Type: application/json" \
-  -d '{"type":"deposit","destination":"100","amount":10}'
-curl "http://localhost:3000/balance?account_id=100"
-```
-
-Last line should return `10`.
-
-### Step 3 — Stop the server
-
-In the terminal where uvicorn is running, press **Ctrl+C**.
-
-## Run with Docker
-
-Requires [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/) installed.
-
-```bash
-cp .env.example .env
-docker compose up --build
-```
-
-The stack starts the API on port **8000** with Redis on the internal `app-network`. Open [http://localhost:8000/docs](http://localhost:8000/docs) to try the API.
-
-For a single image build without Compose:
-
-```bash
-docker build -t e-bank-api .
-docker run --rm -p 8000:8000 -e REDIS_URL=redis://host.docker.internal:6379/0 e-bank-api
-```
-
-## Running tests
-
-With the virtual environment activated and dev dependencies installed:
-
-```bash
-pip install -r requirements-dev.txt
-pytest -v
-```
-
-Tests exercise real in-memory state (business logic is not mocked in integration tests).
-
-## API reference
-
-The tables below summarize behavior. For interactive exploration, use **[`/docs`](http://localhost:3000/docs)** while the server is running.
-
-### `POST /reset`
-
-Clears all accounts. Returns **200** with body **`OK`** (plain text).
-
-### `GET /balance?account_id={id}`
-
-| Condition | Status | Body |
-|-----------|--------|------|
-| Account exists | 200 | Plain text balance (e.g. `20`) |
-| Account does not exist | 404 | `{"message": "Account {id} not found"}` |
-
-Read-only: this endpoint does not modify state.
-
-### `POST /event`
-
-Request body is JSON. The `type` field determines required fields.
-
-#### Deposit
-
-```json
-{"type": "deposit", "destination": "100", "amount": 10}
-```
-
-| Result | Status | Body |
-|--------|--------|------|
-| Success (creates account if needed) | 201 | `{"destination": {"id": "100", "balance": 10}}` |
-
-#### Withdraw
-
-```json
-{"type": "withdraw", "origin": "100", "amount": 5}
-```
-
-| Result | Status | Body |
-|--------|--------|------|
-| Success | 201 | `{"origin": {"id": "100", "balance": 15}}` |
-| Unknown account | 404 | `{"message": "Account {id} not found"}` |
-| Insufficient funds | 400 | `{"message": "Account {id} has insufficient funds"}` |
-
-#### Transfer
-
-```json
-{"type": "transfer", "origin": "100", "amount": 15, "destination": "300"}
-```
-
-| Result | Status | Body |
-|--------|--------|------|
-| Success (creates destination if needed) | 201 | `{"origin": {"id": "...", "balance": ...}, "destination": {"id": "...", "balance": ...}}` |
-| Unknown origin | 404 | `{"message": "Account {id} not found"}` |
-| Insufficient funds | 400 | `{"message": "Account {id} has insufficient funds"}` |
-
-Transfers are atomic: origin and destination balances are updated together after validation; failed transfers leave state unchanged.
-
-Account IDs are **strings** (e.g. `"100"`).
-
-## Project structure
-
-```
 e-bank-api/
 ├── app/
-│   ├── main.py       # HTTP routes (thin layer)
-│   ├── services.py   # Business rules
-│   ├── core/database.py  # Async engine, session, migrations base
-│   ├── models/account.py # SQLAlchemy Account model
-│   ├── repositories/     # DB queries (AccountRepository)
-│   ├── schemas.py    # Request validation (Pydantic)
-│   └── errors.py     # Domain exceptions
+│   ├── auth/           # OIDC JWT validation
+│   ├── core/           # db, logging, middleware
+│   ├── middleware/     # idempotency
+│   ├── repositories/
+│   ├── main.py
+│   └── services.py
+├── alembic/
 ├── tests/
-│   ├── test_api.py       # HTTP integration tests
-│   └── test_services.py  # Unit tests for business logic
-├── requirements.txt      # Runtime (API + Docker)
-├── requirements-dev.txt  # Runtime + test tools
-├── Dockerfile
+├── src/                # Cloudflare Worker proxy
 ├── docker-compose.yml
-├── docker-compose.prod.yml
-├── redis/redis.conf
-├── .env.example
-├── .dockerignore
-└── pytest.ini
+└── wrangler.json
 ```
 
-## Design decisions
+## Local development (optional)
 
-### Layering
+```bash
+make setup
+# start Postgres/Redis (Compose) or point DATABASE_URL / REDIS_URL at local services
+export OIDC_ENABLED=false   # or run kalke-auth and set OIDC_*
+make run                    # http://localhost:3000
+make test
+```
 
-- **HTTP** (`main.py`): maps requests/responses and status codes only.
-- **Business logic** (`services.py`): deposits, withdrawals, transfers, balance reads, reset.
-- **Persistence** (`repositories/`): PostgreSQL via SQLAlchemy async; row-level locks on withdraw/transfer.
+## License
 
-This keeps rules testable without the web layer and isolates DB access in the repository layer.
-
-### `requirements.txt` instead of Poetry
-
-This project uses **`requirements.txt`** / **`requirements-dev.txt`** rather than Poetry (or similar) because:
-
-1. **Minimal setup** — reviewers and CI can run `pip install -r requirements-dev.txt` with no extra tooling.
-2. **Challenge scope** — few dependencies; a lockfile and workspace tooling add little value here.
-3. **Runtime vs dev split** — `requirements.txt` powers the API and Docker image; `requirements-dev.txt` adds `pytest` and `httpx2` for local development and CI.
-
-For a larger production service or a team repo, **Poetry** or **uv** with a lockfile would be appropriate for reproducible installs and dev/prod dependency groups.
-
-### Error responses
-
-Business failures return JSON with a **`message`** field and the appropriate HTTP status:
-
-- Missing account: **404** — e.g. `{"message": "Account 100 not found"}`
-- Insufficient funds: **400** — e.g. `{"message": "Account 100 has insufficient funds"}`
-
-Domain exceptions are mapped globally in `main.py` via a FastAPI exception handler.
-
-### Other guarantees
-
-- **`GET /balance`** never mutates state.
-- **Transfers** validate funds before updating both accounts in one service method.
-- **Payload validation** (required fields per event type, positive `amount`) happens in `schemas.py` before business logic runs.
-
-## Dependencies
-
-| Package | Purpose | File |
-|---------|---------|------|
-| fastapi | HTTP API | `requirements.txt` |
-| uvicorn | ASGI server | `requirements.txt` |
-| pydantic | Request schemas | `requirements.txt` |
-| pytest | Tests | `requirements-dev.txt` |
-| httpx2 | Test client | `requirements-dev.txt` |
-
-See [requirements.txt](requirements.txt) and [requirements-dev.txt](requirements-dev.txt) for version constraints.
+Apache-2.0 (if present) / see repository.
