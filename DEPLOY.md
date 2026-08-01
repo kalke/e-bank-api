@@ -53,8 +53,4 @@ npm --prefix worker run deploy
 
 ## 6. Branch protection
 
-Settings → Branches → `main`:
-
-- Require PR
-- Require checks: `Lint`, `Tests`, `Docker build`
-- Restrict pushes to `kalke` only
+See [kalke BRANCH_PROTECTION.md](https://github.com/kalke/kalke/blob/main/BRANCH_PROTECTION.md). Required checks: `Lint`, `Tests`, `Docker build`. Restrict push to `kalke` only.
