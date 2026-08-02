@@ -26,8 +26,9 @@ Issuer: `https://auth.kalke.dev/realms/kalke`
 Audience: `e-bank-api`
 
 All mutating/read API routes require `Authorization: Bearer <jwt|kalke_…>` with
-`bank:write`. PATs are validated via kalke-auth introspect (same
-`INTROSPECT_SECRET` as auth). Public surface is `GET /health` only.
+permission `admin` **and** an email in `ADMIN_EMAILS` (default owner email).
+PATs are validated via kalke-auth introspect (same `INTROSPECT_SECRET` as auth).
+Public surface is `GET /health` only.
 
 Deploy [kalke-auth](https://github.com/kalke/kalke-auth) first.
 

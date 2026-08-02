@@ -9,6 +9,7 @@ export interface Env {
 	OIDC_ENABLED: string;
 	AUTH_INTROSPECT_URL: string;
 	INTROSPECT_SECRET: string;
+	ADMIN_EMAILS: string;
 	IDEMPOTENCY_ENABLED: string;
 	CORS_ORIGINS: string;
 	LOG_LEVEL: string;
@@ -25,6 +26,7 @@ function apiEnvVars(env: Env): Record<string, string> {
 		AUTH_INTROSPECT_URL:
 			env.AUTH_INTROSPECT_URL || "https://auth.kalke.dev/v1/introspect",
 		INTROSPECT_SECRET: env.INTROSPECT_SECRET || "",
+		ADMIN_EMAILS: env.ADMIN_EMAILS || "henriquekalke@icloud.com",
 		IDEMPOTENCY_ENABLED: env.IDEMPOTENCY_ENABLED || "true",
 		RESET_ENABLED: "false",
 		CORS_ORIGINS: env.CORS_ORIGINS || "https://kalke.dev,https://www.kalke.dev",
