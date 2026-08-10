@@ -117,4 +117,4 @@ def parse_account_display(value: str) -> tuple[int, int]:
 
 
 def format_account_display(number: int, digit: int) -> str:
-    return f"{int(number):06d}-{int(digit)}"
+    return f"{int(number)}-{int(digit)}"

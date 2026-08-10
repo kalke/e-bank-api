@@ -21,7 +21,7 @@ class AccountIdentity:
 
     @property
     def display(self) -> str:
-        return f"{self.account_number:06d}-{self.digit}"
+        return f"{self.account_number}-{self.digit}"
 
 
 class AccountNumberGenerator:

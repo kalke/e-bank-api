@@ -66,4 +66,4 @@ class Account(Base):
     def display_number(self) -> str | None:
         if self.account_number is None or self.digit is None:
             return None
-        return f"{int(self.account_number):06d}-{int(self.digit)}"
+        return f"{int(self.account_number)}-{int(self.digit)}"

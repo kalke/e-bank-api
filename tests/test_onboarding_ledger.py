@@ -63,7 +63,9 @@ def test_cep_email_phone() -> None:
 
 def test_account_display_roundtrip() -> None:
     assert format_account_display(100123, 4) == "100123-4"
+    assert format_account_display(1, 7) == "1-7"
     assert parse_account_display("100123-4") == (100123, 4)
+    assert parse_account_display("1-7") == (1, 7)
     assert parse_account_display("1001234") == (100123, 4)
     assert mask_document(VALID_CPF) == "***.***.***-05"
     assert mask_document(None) is None
