@@ -45,15 +45,3 @@ Config: [`.env.example`](.env.example), [`prod.env.example`](prod.env.example).
 | `GET` | `/v1/me/account`, `/v1/me/transactions` |
 | `POST` | `/v1/me/transfer`, `/v1/me/withdraw` |
 | `POST` | `/v1/onboarding/skip` |
-
-## Production (EC2)
-
-Same host as auth/PDE. Push `main` → GHCR → self-hosted runner → `make aws-up`.
-
-| Need | |
-|---|---|
-| Secrets | `DATABASE_URL`, `REDIS_URL`, `OIDC_*`, `M2M_USER_FORWARD_SECRET` |
-| DNS | `A ebank.kalke.dev → EC2 EIP` (grey cloud); Caddy proxies to `ebank-api:8000` |
-| Runtime | `mem_limit: 256m`, 1 worker; discovery `http://auth:8081/realms/kalke` |
-
-Prefer **t3.small (2 GB)** when running auth + PDE + e-bank.
