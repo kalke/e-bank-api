@@ -51,6 +51,7 @@ curl -sS -H "Authorization: Bearer $TOKEN" \
 | `make smoke-oidc` | Token → `POST /event` (expect 422) |
 | `make test` / `make lint` / `make ci` | Quality |
 | `make migrate` | Apply Alembic migrations |
+| `make aws-up` | Prod on EC2: pull GHCR + start on auth network |
 
 ## Authentication and authorization
 
@@ -80,7 +81,7 @@ Set `OIDC_ENABLED=false` only for unit tests (CI already does this).
 
 ## Configuration
 
-See [`.env.example`](.env.example). Important vars:
+See [`.env.example`](.env.example) and [`prod.env.example`](prod.env.example). Important vars:
 
 | Var | Purpose |
 |---|---|
@@ -92,9 +93,10 @@ See [`.env.example`](.env.example). Important vars:
 | `CORS_ORIGINS` | Browser sandbox origins |
 | `LEGACY_CHALLENGE_ROUTES` | Enable legacy `/event` routes (CI/dev) |
 
-## Cloudflare deploy
+## Production deploy
 
-Production target: **`ebank.kalke.dev`** (Workers + Containers) with Neon Postgres + Upstash Redis. See [DEPLOY.md](DEPLOY.md). Push to `main` runs CI then deploy.
+Production target: **`ebank.kalke.dev`** on the shared EC2 (Caddy + GHCR), with Neon
+Postgres + Upstash Redis. See [DEPLOY.md](DEPLOY.md). Push to `main` runs CI then deploy.
 
 ## Layout
 
@@ -113,9 +115,8 @@ e-bank-api/
 │   └── main.py
 ├── alembic/
 ├── tests/
-├── src/                # Cloudflare Worker proxy
 ├── docker-compose.yml
-└── wrangler.json
+└── docker-compose.aws.yml
 ```
 
 ## Local development (optional)

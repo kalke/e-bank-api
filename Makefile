@@ -1,10 +1,11 @@
 .PHONY: help setup setup-oidc run test lint lint-ci ci migrate migrate-down migration db-shell \
 	ensure-env docker-config docker-build up docker-up docker-down docker-restart \
-	docker-logs docker-debug docker-prod restart auth-up auth-down auth-token \
-	ebank-m2m-token smoke-oidc up-all down-all
+	docker-logs docker-debug restart auth-up auth-down auth-token \
+	ebank-m2m-token smoke-oidc up-all down-all aws-up aws-down aws-ps aws-logs
 
 COMPOSE := docker compose
-COMPOSE_PROD := $(COMPOSE) -f docker-compose.yml -f docker-compose.prod.yml
+COMPOSE_AWS ?= docker compose -f docker-compose.aws.yml
+EBANK_IMAGE ?= ghcr.io/kalke/e-bank-api:latest
 KALKE_AUTH_DIR ?= ../kalke-auth
 OIDC_ISSUER_DEFAULT ?= http://localhost:8443/realms/kalke
 OIDC_AUDIENCE_DEFAULT ?= e-bank-api
@@ -41,6 +42,12 @@ help:
 	@echo "  smoke-oidc     Token → POST /event without body (expect 422)"
 	@echo "  auth-token     Demo user JWT from kalke-auth"
 	@echo "  ebank-m2m-token M2M JWT for e-bank-api"
+	@echo ""
+	@echo "AWS EC2 (prod):"
+	@echo "  aws-up         Pull GHCR image and start on kalke-auth network"
+	@echo "  aws-down       Stop prod API container"
+	@echo "  aws-ps         Show prod container status"
+	@echo "  aws-logs       Tail prod logs"
 
 setup:
 	python -m venv $(VENV)
@@ -139,8 +146,25 @@ docker-logs:
 docker-debug: ensure-env
 	$(COMPOSE) --profile debug up --build
 
-docker-prod: ensure-env
-	$(COMPOSE_PROD) up --build -d
+aws-up: ## Prod on AWS EC2: pull GHCR image + start API on kalke-auth network
+	@test -f prod.env || { echo "prod.env missing — copy prod.env.example and fill secrets"; exit 1; }
+	@docker network inspect kalke-auth_default >/dev/null 2>&1 || { \
+		echo "Missing Docker network kalke-auth_default. Start kalke-auth first (make aws-up there)."; \
+		exit 1; \
+	}
+	@docker builder prune -af >/dev/null 2>&1 || true
+	EBANK_IMAGE="$(EBANK_IMAGE)" $(COMPOSE_AWS) pull api
+	EBANK_IMAGE="$(EBANK_IMAGE)" $(COMPOSE_AWS) up -d --wait --no-build
+	@docker image prune -f >/dev/null 2>&1 || true
+
+aws-down: ## Stop AWS e-bank API
+	$(COMPOSE_AWS) down
+
+aws-ps: ## Show AWS e-bank status
+	$(COMPOSE_AWS) ps
+
+aws-logs: ## Tail AWS e-bank logs
+	$(COMPOSE_AWS) logs -f --tail=200
 
 smoke-oidc: ## Token → POST /event (expect 422 = auth OK)
 	@TOKEN=$$($(MAKE) -s auth-token); \

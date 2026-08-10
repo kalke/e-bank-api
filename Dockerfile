@@ -1,24 +1,24 @@
-FROM python:3.11-slim AS builder
+FROM python:3.12-slim AS builder
 
-WORKDIR /app
+WORKDIR /build
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-FROM python:3.11-slim AS runtime
+FROM python:3.12-slim AS runtime
 
 WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH="/home/appuser/.local/bin:${PATH}"
+    PATH="/opt/venv/bin:${PATH}"
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd --create-home --shell /bin/bash appuser
+RUN useradd --create-home --shell /bin/bash --uid 10001 appuser
 
-COPY --from=builder /root/.local /home/appuser/.local
+COPY --from=builder /opt/venv /opt/venv
 COPY app/ ./app/
 COPY alembic/ ./alembic/
 COPY alembic.ini ./
@@ -31,7 +31,5 @@ USER appuser
 
 EXPOSE 8000
 
-HEALTHCHECK CMD curl -f http://localhost:8000/health || exit 1
-
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
