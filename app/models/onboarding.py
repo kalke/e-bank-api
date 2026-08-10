@@ -47,6 +47,10 @@ class OnboardingSession(Base):
         server_default=func.now(),
         nullable=False,
     )
+    draft_json: Mapped[dict | None] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"),
+        nullable=True,
+    )
 
 
 class OnboardingDocument(Base):

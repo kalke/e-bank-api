@@ -17,6 +17,14 @@ class AccountRecord:
     currency: str = "USD"
     status: str = "active"
     overdraft_limit: Decimal = Decimal("0")
+    account_number: int | None = None
+    digit: int | None = None
+
+    @property
+    def display_number(self) -> str | None:
+        if self.account_number is None or self.digit is None:
+            return None
+        return f"{int(self.account_number):06d}-{int(self.digit)}"
 
 
 @dataclass(frozen=True)
@@ -38,14 +46,14 @@ class AccountRepository:
         account = await self._get_account_row(account_id)
         if account is None:
             return None
-        balance = await self._sum_balance(account_id)
+        balance = await self._balance_for(account)
         return self._to_record(account, balance)
 
     async def get_for_update(self, account_id: str) -> AccountRecord | None:
         account = await self._lock_account(account_id)
         if account is None:
             return None
-        balance = await self._sum_balance(account_id)
+        balance = await self._balance_for(account)
         return self._to_record(account, balance)
 
     async def get_by_owner_kind(
@@ -62,7 +70,7 @@ class AccountRepository:
         account = result.scalar_one_or_none()
         if account is None:
             return None
-        balance = await self._sum_balance(account.id)
+        balance = await self._balance_for(account)
         return self._to_record(account, balance)
 
     async def ensure_account(
@@ -157,10 +165,13 @@ class AccountRepository:
         self._session.add(txn)
         await self._session.flush()
         account = await self._get_account_row(account_id)
+        if account is not None:
+            account.balance_cached = Decimal(str(account.balance_cached or 0)) + amount
+            await self._session.flush()
         balance = await self._sum_balance(account_id)
         if account is None:
             return AccountRecord(id=account_id, balance=balance)
-        return self._to_record(account, balance)
+        return self._to_record(account, Decimal(str(account.balance_cached or balance)))
 
     async def list_transactions(
         self,
@@ -197,12 +208,22 @@ class AccountRepository:
         if bind is not None and bind.dialect.name == "postgresql":
             await self._session.execute(
                 text(
-                    "TRUNCATE TABLE onboarding_documents, onboarding_sessions, "
+                    "TRUNCATE TABLE ledger_postings, journal_entries, ledger_accounts, "
+                    "holders, onboarding_documents, onboarding_sessions, "
                     "consents, demo_grants, transactions, accounts, users "
                     "RESTART IDENTITY CASCADE"
                 ),
             )
+            await self._session.execute(
+                text(
+                    "INSERT INTO ledger_accounts (id, code, name, kind) VALUES "
+                    "('sys_cash', 'cash', 'System cash', 'asset') "
+                    "ON CONFLICT (id) DO NOTHING"
+                )
+            )
         else:
+            from app.models.holder import Holder
+            from app.models.ledger import JournalEntry, LedgerAccount, LedgerPosting
             from app.models.onboarding import (
                 Consent,
                 DemoGrant,
@@ -211,6 +232,10 @@ class AccountRepository:
             )
             from app.models.user import User
 
+            await self._session.execute(delete(LedgerPosting))
+            await self._session.execute(delete(JournalEntry))
+            await self._session.execute(delete(LedgerAccount))
+            await self._session.execute(delete(Holder))
             await self._session.execute(delete(OnboardingDocument))
             await self._session.execute(delete(OnboardingSession))
             await self._session.execute(delete(Consent))
@@ -232,6 +257,12 @@ class AccountRepository:
         )
         return result.scalar_one_or_none()
 
+    async def _balance_for(self, account: Account) -> Decimal:
+        cached = getattr(account, "balance_cached", None)
+        if cached is not None:
+            return Decimal(str(cached))
+        return await self._sum_balance(account.id)
+
     async def _sum_balance(self, account_id: str) -> Decimal:
         result = await self._session.execute(
             select(func.coalesce(func.sum(Transaction.amount), 0)).where(
@@ -251,4 +282,6 @@ class AccountRepository:
             currency=account.currency,
             status=account.status,
             overdraft_limit=Decimal(str(account.overdraft_limit or 0)),
+            account_number=account.account_number,
+            digit=account.digit,
         )

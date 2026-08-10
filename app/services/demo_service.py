@@ -1,6 +1,4 @@
 from dataclasses import dataclass
-from decimal import Decimal
-from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,15 +8,19 @@ from app.domain.money import Money, parse_positive_money
 from app.errors import (
     AccountNotFound,
     ForbiddenAccountAccess,
-    InsufficientFunds,
+    OnboardingError,
     TransferLimitExceeded,
 )
+from app.models.account import Account
+from app.models.holder import Holder
 from app.repositories.account_repository import AccountRecord, AccountRepository
 from app.repositories.user_repository import (
     DemoGrantRepository,
     OnboardingRepository,
     UserRepository,
 )
+from app.services.ledger import LedgerService
+from app.services.transfer import TransferService
 
 logger = get_logger(__name__)
 
@@ -32,6 +34,10 @@ class DemoAccountView:
     status: str
     onboarding_status: str
     demo_credited: bool
+    account_number: int | None = None
+    digit: int | None = None
+    display_number: str | None = None
+    holder_name: str | None = None
 
 
 class DemoBankService:
@@ -42,6 +48,8 @@ class DemoBankService:
         self._grants = DemoGrantRepository(session)
         self._onboarding = OnboardingRepository(session)
         self._settings = get_settings()
+        self._transfers = TransferService(session)
+        self._ledger = LedgerService(session)
 
     async def bootstrap(
         self,
@@ -51,63 +59,53 @@ class DemoBankService:
         display_name: str | None = None,
         request_id: str | None = None,
     ) -> DemoAccountView:
-        user = await self._users.upsert(
-            subject,
-            email=email,
-            display_name=display_name,
-        )
+        """Deprecated free bootstrap — account opens via onboarding complete/skip."""
+        _ = email, display_name, request_id
+        user = await self._users.get(subject)
         account = await self._accounts.get_by_owner_kind(subject, "checking")
-        if account is None:
-            account_id = f"chk_{uuid4().hex[:16]}"
-            account = await self._accounts.create(
-                account_id,
-                Decimal("0"),
-                owner_subject=subject,
-                kind="checking",
-                currency=self._settings.welcome_currency,
-                overdraft_limit=Decimal("0"),
-            )
-
-        grant = await self._grants.get(subject)
-        if grant is None:
-            welcome = Money(self._settings.welcome_amount)
-            updated = await self._accounts.record_transaction(
-                account.id,
-                welcome.amount,
-                "demo_grant",
-                actor_subject=subject,
-                request_id=request_id,
-                memo="Welcome demo funds",
-            )
-            await self._grants.create(
-                subject,
-                welcome.amount,
-                self._settings.welcome_currency,
-            )
-            await self._users.mark_demo_credited(subject)
-            account = updated
-            logger.info(
-                "demo_grant_credited",
-                subject=subject,
-                amount=welcome.as_str(),
-                account_id=account.id,
-            )
-        else:
-            # refresh balance
-            refreshed = await self._accounts.get(account.id)
-            if refreshed is not None:
-                account = refreshed
-
-        return self._view(account, user.onboarding_status, demo_credited=True)
+        if (
+            account is not None
+            and user
+            and user.onboarding_status
+            in {
+                "completed",
+                "skipped",
+            }
+        ):
+            return await self.get_my_account(subject)
+        raise OnboardingError("use onboarding complete or skip to open an account")
 
     async def get_my_account(self, subject: str) -> DemoAccountView:
         user = await self._users.get(subject)
+        if user is None or user.onboarding_status not in {"completed", "skipped"}:
+            raise OnboardingError("complete onboarding before using the bank")
         account = await self._accounts.get_by_owner_kind(subject, "checking")
         if account is None:
             raise AccountNotFound("checking")
-        status = user.onboarding_status if user else "not_started"
-        credited = user.demo_credited_at is not None if user else False
-        return self._view(account, status, demo_credited=credited)
+        holder = await self._session.get(Holder, subject)
+        return self._view(
+            account,
+            user.onboarding_status,
+            demo_credited=user.demo_credited_at is not None,
+            holder_name=holder.full_name if holder else None,
+        )
+
+    async def list_accounts(self, subject: str) -> list[DemoAccountView]:
+        try:
+            view = await self.get_my_account(subject)
+            return [view]
+        except (AccountNotFound, OnboardingError):
+            return []
+
+    async def get_account_by_display(
+        self,
+        subject: str,
+        display: str,
+    ) -> DemoAccountView:
+        view = await self.get_my_account(subject)
+        if view.display_number != display and view.id != display:
+            raise ForbiddenAccountAccess(display)
+        return view
 
     async def list_transactions(
         self,
@@ -141,67 +139,28 @@ class DemoBankService:
         self,
         subject: str,
         *,
-        destination_account_id: str,
+        destination_account_id: str | None = None,
+        destination_account: str | None = None,
+        destination_document: str | None = None,
         amount: str,
         memo: str | None = None,
         request_id: str | None = None,
+        idempotency_key: str | None = None,
+        source_ip: str | None = None,
+        user_agent: str | None = None,
     ) -> dict:
-        money = parse_positive_money(amount)
-        max_transfer = Money(self._settings.max_transfer_amount)
-        if money.amount > max_transfer.amount:
-            raise TransferLimitExceeded(money.as_str(), max_transfer.as_str())
-
-        origin = await self._require_owned_checking(subject)
-        if destination_account_id == origin.id:
-            raise TransferLimitExceeded(money.as_str(), "0.00")
-
-        await self._accounts.lock_accounts_for_update(origin.id, destination_account_id)
-        origin = await self._accounts.get(origin.id)
-        if origin is None or origin.owner_subject != subject:
-            raise ForbiddenAccountAccess()
-
-        destination = await self._accounts.get(destination_account_id)
-        if destination is None:
-            raise AccountNotFound(destination_account_id)
-
-        if origin.balance - money.amount < origin.overdraft_limit:
-            raise InsufficientFunds(origin.id)
-
-        updated_origin = await self._accounts.record_transaction(
-            origin.id,
-            -money.amount,
-            "transfer_out",
-            destination_account_id,
-            actor_subject=subject,
-            request_id=request_id,
+        return await self._transfers.transfer(
+            subject,
+            amount=amount,
+            destination_account_id=destination_account_id,
+            destination_account=destination_account,
+            destination_document=destination_document,
             memo=memo,
-        )
-        updated_dest = await self._accounts.record_transaction(
-            destination_account_id,
-            money.amount,
-            "transfer_in",
-            origin.id,
-            actor_subject=subject,
             request_id=request_id,
-            memo=memo,
+            idempotency_key=idempotency_key,
+            source_ip=source_ip,
+            user_agent=user_agent,
         )
-        logger.info(
-            "demo_transfer_completed",
-            subject=subject,
-            origin=origin.id,
-            destination=destination_account_id,
-            amount=money.as_str(),
-        )
-        return {
-            "origin": {
-                "id": updated_origin.id,
-                "balance": Money(updated_origin.balance).as_str(),
-            },
-            "destination": {
-                "id": updated_dest.id,
-                "balance": Money(updated_dest.balance).as_str(),
-            },
-        }
 
     async def withdraw(
         self,
@@ -209,35 +168,39 @@ class DemoBankService:
         *,
         amount: str,
         request_id: str | None = None,
+        idempotency_key: str | None = None,
+        source_ip: str | None = None,
+        user_agent: str | None = None,
     ) -> dict:
         money = parse_positive_money(amount)
         max_withdraw = Money(self._settings.max_withdraw_amount)
         if money.amount > max_withdraw.amount:
             raise TransferLimitExceeded(money.as_str(), max_withdraw.as_str())
 
-        account = await self._require_owned_checking(subject)
-        locked = await self._accounts.get_for_update(account.id)
-        if locked is None or locked.owner_subject != subject:
-            raise ForbiddenAccountAccess(account.id)
-
-        if locked.balance - money.amount < locked.overdraft_limit:
-            raise InsufficientFunds(locked.id)
-
-        updated = await self._accounts.record_transaction(
-            locked.id,
-            -money.amount,
-            "withdraw",
+        origin = await self._transfers.require_onboarded_account(subject)
+        row = await self._session.get(Account, origin.id)
+        assert row is not None
+        await self._ledger.withdraw(
+            row,
+            money.amount,
             actor_subject=subject,
             request_id=request_id,
-            memo="Demo ATM withdraw",
+            idempotency_key=idempotency_key or f"withdraw:{subject}:{request_id}",
+            source_ip=source_ip,
+            user_agent=user_agent,
         )
+        await self._session.refresh(row)
         return {
-            "id": updated.id,
-            "balance": Money(updated.balance).as_str(),
-            "currency": updated.currency,
+            "id": row.id,
+            "display_number": row.display_number,
+            "balance": Money(row.balance_cached).as_str(),
+            "currency": row.currency,
         }
 
     async def _require_owned_checking(self, subject: str) -> AccountRecord:
+        user = await self._users.get(subject)
+        if user is None or user.onboarding_status not in {"completed", "skipped"}:
+            raise OnboardingError("complete onboarding before using the bank")
         account = await self._accounts.get_by_owner_kind(subject, "checking")
         if account is None:
             raise AccountNotFound("checking")
@@ -251,6 +214,7 @@ class DemoBankService:
         onboarding_status: str,
         *,
         demo_credited: bool,
+        holder_name: str | None = None,
     ) -> DemoAccountView:
         return DemoAccountView(
             id=account.id,
@@ -260,4 +224,8 @@ class DemoBankService:
             status=account.status,
             onboarding_status=onboarding_status,
             demo_credited=demo_credited,
+            account_number=account.account_number,
+            digit=account.digit,
+            display_number=account.display_number,
+            holder_name=holder_name,
         )

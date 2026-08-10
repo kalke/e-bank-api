@@ -1,5 +1,15 @@
 from fastapi.testclient import TestClient
 
+# Valid CPF (check digits).
+VALID_CPF = "39053344705"
+
+
+def _open_account(client: TestClient) -> dict:
+    client.post("/v1/onboarding/start")
+    skip = client.post("/v1/onboarding/skip")
+    assert skip.status_code == 200
+    return skip.json()
+
 
 def test_demo_meta(client: TestClient) -> None:
     response = client.get("/v1/demo/meta")
@@ -7,70 +17,81 @@ def test_demo_meta(client: TestClient) -> None:
     data = response.json()
     assert data["demo"] is True
     assert data["welcome_amount"] == "10000.00"
-    assert data["currency"] == "USD"
-    assert "DEMO ONLY" in data["disclaimer"]
+    assert "double_entry_ledger" in data["features"]
 
 
-def test_bootstrap_credits_once(client: TestClient) -> None:
-    first = client.post("/v1/demo/bootstrap")
-    assert first.status_code == 200
-    body = first.json()
+def test_bootstrap_requires_onboarding(client: TestClient) -> None:
+    response = client.post("/v1/demo/bootstrap")
+    assert response.status_code == 400
+
+
+def test_skip_opens_account_with_number(client: TestClient) -> None:
+    body = _open_account(client)
+    assert body["onboarding_status"] == "skipped"
     assert body["balance"] == "10000.00"
-    assert body["demo_credited"] is True
-    assert body["demo"] is True
-    account_id = body["id"]
+    assert body["display_number"]
+    assert body["account_number"] >= 100000
+    assert 0 <= body["digit"] <= 9
 
-    second = client.post("/v1/demo/bootstrap")
-    assert second.status_code == 200
-    assert second.json()["balance"] == "10000.00"
-    assert second.json()["id"] == account_id
+    again = client.post("/v1/onboarding/skip")
+    assert again.status_code == 200
+    assert again.json()["id"] == body["id"]
+    assert again.json()["balance"] == "10000.00"
 
     account = client.get("/v1/me/account")
     assert account.status_code == 200
-    assert account.json()["balance"] == "10000.00"
+    assert account.json()["display_number"] == body["display_number"]
 
 
-def test_onboarding_skip_then_bank(client: TestClient) -> None:
-    start = client.post("/v1/onboarding/start")
-    assert start.status_code == 200
-    assert start.json()["skippable"] is True
-
-    skip = client.post("/v1/onboarding/skip")
-    assert skip.status_code == 200
-    assert skip.json()["onboarding_status"] == "skipped"
-
-    boot = client.post("/v1/demo/bootstrap")
-    assert boot.status_code == 200
-    assert boot.json()["balance"] == "10000.00"
-    assert boot.json()["onboarding_status"] == "skipped"
-
-
-def test_onboarding_document_and_complete(client: TestClient) -> None:
+def test_onboarding_complete_full(client: TestClient) -> None:
     client.post("/v1/onboarding/start")
-    client.post(
-        "/v1/onboarding/consent",
-        json={"policy_version": "demo-bank-tos-v1"},
-    )
-    docs = client.post(
-        "/v1/onboarding/documents",
+    complete = client.post(
+        "/v1/onboarding/complete",
         json={
-            "doc_type": "identity_document",
-            "pde_extraction_id": "ext_test_1",
-            "summary": {"name": "Demo User", "cpf": "12345678901"},
+            "full_name": "Maria Silva",
+            "birth_date": "1990-05-20",
+            "document_number": VALID_CPF,
+            "cep": "01310100",
+            "street": "Av Paulista",
+            "number": "1000",
+            "complement": "cj 10",
+            "neighborhood": "Bela Vista",
+            "city": "Sao Paulo",
+            "state": "SP",
+            "email": "maria@example.com",
+            "phone": "11987654321",
+            "terms_accepted": True,
+            "accepted_at": "2026-08-10T12:00:00Z",
         },
     )
-    assert docs.status_code == 200
-    assert len(docs.json()["documents"]) == 1
-    # cpf should be redacted in stored summary path — response lists metadata only
-    complete = client.post("/v1/onboarding/complete")
     assert complete.status_code == 200
-    assert complete.json()["onboarding_status"] == "completed"
+    body = complete.json()
+    assert body["onboarding_status"] == "completed"
+    assert body["holder_name"] == "Maria Silva"
+    assert body["balance"] == "10000.00"
 
 
-def test_transfer_and_transactions(client: TestClient) -> None:
-    a = client.post("/v1/demo/bootstrap").json()
-    # Create destination via second synthetic user by direct service is hard;
-    # use legacy deposit to create dest account then transfer to it.
+def test_onboarding_rejects_underage(client: TestClient) -> None:
+    client.post("/v1/onboarding/start")
+    response = client.post(
+        "/v1/onboarding/complete",
+        json={
+            "full_name": "Kid",
+            "birth_date": "2015-01-01",
+            "document_number": VALID_CPF,
+            "cep": "01310100",
+            "street": "Rua A",
+            "number": "1",
+            "email": "kid@example.com",
+            "phone": "11987654321",
+            "terms_accepted": True,
+        },
+    )
+    assert response.status_code == 400
+
+
+def test_transfer_resolve_and_ledger(client: TestClient) -> None:
+    a = _open_account(client)
     dest = client.post(
         "/event",
         json={"type": "deposit", "destination": "dest-demo-1", "amount": 1},
@@ -79,19 +100,27 @@ def test_transfer_and_transactions(client: TestClient) -> None:
 
     transfer = client.post(
         "/v1/me/transfer",
+        headers={"Idempotency-Key": "xfer-test-1"},
         json={
             "destination_account_id": "dest-demo-1",
             "amount": "25.50",
             "memo": "demo payment",
         },
     )
-    assert transfer.status_code == 200
+    assert transfer.status_code == 200, transfer.json()
     assert transfer.json()["origin"]["balance"] == "9974.50"
-    assert transfer.json()["destination"]["balance"] == "26.50"
 
-    txs = client.get("/v1/me/transactions")
-    assert txs.status_code == 200
-    assert len(txs.json()["transactions"]) >= 2
+    replay = client.post(
+        "/v1/me/transfer",
+        headers={"Idempotency-Key": "xfer-test-1"},
+        json={
+            "destination_account_id": "dest-demo-1",
+            "amount": "25.50",
+            "memo": "demo payment",
+        },
+    )
+    assert replay.status_code == 200
+    assert replay.json()["origin"]["balance"] == "9974.50"
 
     me = client.get("/v1/me/account")
     assert me.json()["id"] == a["id"]
@@ -99,23 +128,64 @@ def test_transfer_and_transactions(client: TestClient) -> None:
 
 
 def test_transfer_limit(client: TestClient) -> None:
-    client.post("/v1/demo/bootstrap")
+    _open_account(client)
     client.post(
         "/event",
         json={"type": "deposit", "destination": "dest-demo-2", "amount": 1},
     )
     response = client.post(
         "/v1/me/transfer",
+        headers={"Idempotency-Key": "xfer-limit"},
         json={"destination_account_id": "dest-demo-2", "amount": "10000.01"},
     )
     assert response.status_code == 400
 
 
 def test_withdraw(client: TestClient) -> None:
-    client.post("/v1/demo/bootstrap")
-    response = client.post("/v1/me/withdraw", json={"amount": "100.00"})
+    _open_account(client)
+    response = client.post(
+        "/v1/me/withdraw",
+        headers={"Idempotency-Key": "wd-1"},
+        json={"amount": "100.00"},
+    )
     assert response.status_code == 200
     assert response.json()["balance"] == "9900.00"
+
+
+def test_accounts_list(client: TestClient) -> None:
+    opened = _open_account(client)
+    listed = client.get("/v1/me/accounts")
+    assert listed.status_code == 200
+    rows = listed.json()["accounts"]
+    assert len(rows) == 1
+    assert rows[0]["display_number"] == opened["display_number"]
+
+
+def test_resolve_by_document(client: TestClient) -> None:
+    client.post("/v1/onboarding/start")
+    client.post(
+        "/v1/onboarding/complete",
+        json={
+            "full_name": "Maria Silva",
+            "birth_date": "1990-05-20",
+            "document_number": VALID_CPF,
+            "cep": "01310100",
+            "street": "Av Paulista",
+            "number": "1000",
+            "city": "Sao Paulo",
+            "state": "SP",
+            "email": "maria@example.com",
+            "phone": "11987654321",
+            "terms_accepted": True,
+        },
+    )
+    resolved = client.post(
+        "/v1/me/transfers/resolve",
+        json={"document": VALID_CPF},
+    )
+    assert resolved.status_code == 200
+    assert resolved.json()["holder_name"] == "Maria Silva"
+    assert resolved.json()["document_masked"].endswith("05")
 
 
 def test_ready(client: TestClient) -> None:

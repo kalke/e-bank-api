@@ -27,6 +27,10 @@ from app.models import (  # noqa: E402, F401
     Account,
     Consent,
     DemoGrant,
+    Holder,
+    JournalEntry,
+    LedgerAccount,
+    LedgerPosting,
     OnboardingDocument,
     OnboardingSession,
     Transaction,
@@ -72,6 +76,7 @@ async def clean_db() -> AsyncGenerator[None, None]:
     """Reset DB and dispose engines so TestClient can bind a fresh event loop."""
     await _dispose_engines()
     async with test_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
 
     async with TestSessionLocal() as session:
