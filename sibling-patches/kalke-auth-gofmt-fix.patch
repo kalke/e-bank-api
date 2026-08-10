@@ -1,0 +1,510 @@
+From 20f93e3f79675714ac569d0d892072cd27395d46 Mon Sep 17 00:00:00 2001
+From: Henrique Kalke <henriquekalke@icloud.com>
+Date: Mon, 10 Aug 2026 17:36:02 +0000
+Subject: [PATCH] fix: gofmt bank proxy files for CI
+
+---
+ internal/config/config.go     |  64 +++----
+ internal/httpapi/bank.go      | 334 +++++++++++++++++-----------------
+ internal/httpapi/bank_test.go |  36 ++--
+ internal/httpapi/server.go    |  28 +--
+ 4 files changed, 231 insertions(+), 231 deletions(-)
+
+diff --git a/internal/config/config.go b/internal/config/config.go
+index aa8cf0e..50d5108 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -134,38 +134,38 @@ func Load() (Config, error) {
+ 	}
+ 
+ 	return Config{
+-		HTTPAddr:             getenv("HTTP_ADDR", ":8080"),
+-		DatabaseURL:          dbURL,
+-		DBSearchPath:         getenv("DB_SEARCH_PATH", "app"),
+-		RedisAddr:            getenv("REDIS_ADDR", "localhost:6379"),
+-		RedisPassword:        os.Getenv("REDIS_PASSWORD"),
+-		RedisTLS:             parseBool(os.Getenv("REDIS_TLS"), true),
+-		SessionSecret:        []byte(sessionSecret),
+-		TokenPepper:          []byte(tokenPepper),
+-		IntrospectSecret:     introspect,
+-		SignupEnabled:        signupEnabled,
+-		AdminEmails:          adminEmails,
+-		MailFrom:             mailFrom,
+-		MailgunAPIKey:        mailgunKey,
+-		MailgunDomain:        mailgunDomain,
+-		ResendAPIKey:         resendKey,
+-		MailDevLog:           mailDevLog,
+-		KCInternalURL:        strings.TrimSuffix(getenv("KC_INTERNAL_URL", "http://127.0.0.1:8081"), "/"),
+-		KCPublicIssuer:       strings.TrimSuffix(getenv("KC_PUBLIC_ISSUER", "https://auth.kalke.dev/realms/kalke"), "/"),
+-		BFFClientID:          bffID,
+-		BFFClientSecret:      bffSecret,
+-		KCAdminUser:          adminUser,
+-		KCAdminPassword:      adminPass,
+-		CORSOrigins:          cors,
+-		CookieDomain:         cookieDomain,
+-		CookieSecure:         parseBool(getenv("COOKIE_SECURE", "true"), true),
+-		CookieSameSite:       strings.ToLower(getenv("COOKIE_SAMESITE", "none")),
+-		SessionTTL:           sessionTTL,
+-		LoginRatePerMinute:   loginRate,
+-		SignupRatePerMinute:  signupRateMin,
+-		SignupRatePerHour:    signupRateHour,
+-		OAuthRedirectURI:     getenv("OAUTH_REDIRECT_URI", "https://auth.kalke.dev/v1/auth/callback"),
+-		OAuthSuccessURL:      getenv("OAUTH_SUCCESS_URL", "https://kalke.dev/playground"),
++		HTTPAddr:               getenv("HTTP_ADDR", ":8080"),
++		DatabaseURL:            dbURL,
++		DBSearchPath:           getenv("DB_SEARCH_PATH", "app"),
++		RedisAddr:              getenv("REDIS_ADDR", "localhost:6379"),
++		RedisPassword:          os.Getenv("REDIS_PASSWORD"),
++		RedisTLS:               parseBool(os.Getenv("REDIS_TLS"), true),
++		SessionSecret:          []byte(sessionSecret),
++		TokenPepper:            []byte(tokenPepper),
++		IntrospectSecret:       introspect,
++		SignupEnabled:          signupEnabled,
++		AdminEmails:            adminEmails,
++		MailFrom:               mailFrom,
++		MailgunAPIKey:          mailgunKey,
++		MailgunDomain:          mailgunDomain,
++		ResendAPIKey:           resendKey,
++		MailDevLog:             mailDevLog,
++		KCInternalURL:          strings.TrimSuffix(getenv("KC_INTERNAL_URL", "http://127.0.0.1:8081"), "/"),
++		KCPublicIssuer:         strings.TrimSuffix(getenv("KC_PUBLIC_ISSUER", "https://auth.kalke.dev/realms/kalke"), "/"),
++		BFFClientID:            bffID,
++		BFFClientSecret:        bffSecret,
++		KCAdminUser:            adminUser,
++		KCAdminPassword:        adminPass,
++		CORSOrigins:            cors,
++		CookieDomain:           cookieDomain,
++		CookieSecure:           parseBool(getenv("COOKIE_SECURE", "true"), true),
++		CookieSameSite:         strings.ToLower(getenv("COOKIE_SAMESITE", "none")),
++		SessionTTL:             sessionTTL,
++		LoginRatePerMinute:     loginRate,
++		SignupRatePerMinute:    signupRateMin,
++		SignupRatePerHour:      signupRateHour,
++		OAuthRedirectURI:       getenv("OAUTH_REDIRECT_URI", "https://auth.kalke.dev/v1/auth/callback"),
++		OAuthSuccessURL:        getenv("OAUTH_SUCCESS_URL", "https://kalke.dev/playground"),
+ 		PDEBaseURL:             pdeBase,
+ 		PDEM2MClientID:         getenv("PDE_M2M_CLIENT_ID", "pde-m2m"),
+ 		PDEM2MClientSecret:     pdeM2MSecret,
+diff --git a/internal/httpapi/bank.go b/internal/httpapi/bank.go
+index fb805b3..8f6fc41 100644
+--- a/internal/httpapi/bank.go
++++ b/internal/httpapi/bank.go
+@@ -1,167 +1,167 @@
+-package httpapi
+-
+-import (
+-	"context"
+-	"io"
+-	"net/http"
+-	"strings"
+-	"time"
+-)
+-
+-func (s *Server) proxyBankBootstrap(w http.ResponseWriter, r *http.Request) {
+-	s.proxyEbank(w, r, "/v1/demo/bootstrap")
+-}
+-
+-func (s *Server) proxyBankMeta(w http.ResponseWriter, r *http.Request) {
+-	s.proxyEbank(w, r, "/v1/demo/meta")
+-}
+-
+-func (s *Server) proxyBankAccount(w http.ResponseWriter, r *http.Request) {
+-	s.proxyEbank(w, r, "/v1/me/account")
+-}
+-
+-func (s *Server) proxyBankTransactions(w http.ResponseWriter, r *http.Request) {
+-	s.proxyEbank(w, r, "/v1/me/transactions")
+-}
+-
+-func (s *Server) proxyBankTransfer(w http.ResponseWriter, r *http.Request) {
+-	s.proxyEbank(w, r, "/v1/me/transfer")
+-}
+-
+-func (s *Server) proxyBankWithdraw(w http.ResponseWriter, r *http.Request) {
+-	s.proxyEbank(w, r, "/v1/me/withdraw")
+-}
+-
+-func (s *Server) proxyBankOnboarding(w http.ResponseWriter, r *http.Request) {
+-	s.proxyEbank(w, r, "/v1/onboarding")
+-}
+-
+-func (s *Server) proxyBankOnboardingStart(w http.ResponseWriter, r *http.Request) {
+-	s.proxyEbank(w, r, "/v1/onboarding/start")
+-}
+-
+-func (s *Server) proxyBankOnboardingConsent(w http.ResponseWriter, r *http.Request) {
+-	s.proxyEbank(w, r, "/v1/onboarding/consent")
+-}
+-
+-func (s *Server) proxyBankOnboardingSkip(w http.ResponseWriter, r *http.Request) {
+-	s.proxyEbank(w, r, "/v1/onboarding/skip")
+-}
+-
+-func (s *Server) proxyBankOnboardingDocuments(w http.ResponseWriter, r *http.Request) {
+-	s.proxyEbank(w, r, "/v1/onboarding/documents")
+-}
+-
+-func (s *Server) proxyBankOnboardingComplete(w http.ResponseWriter, r *http.Request) {
+-	s.proxyEbank(w, r, "/v1/onboarding/complete")
+-}
+-
+-func (s *Server) proxyEbank(w http.ResponseWriter, r *http.Request, upstreamPath string) {
+-	if s.cfg.EbankBaseURL == "" {
+-		writeErr(w, http.StatusServiceUnavailable, "bank proxy not configured")
+-		return
+-	}
+-	p, err := s.principalFromRequest(r)
+-	if err != nil {
+-		writeErr(w, http.StatusUnauthorized, "unauthorized")
+-		return
+-	}
+-	perms := s.effectivePermissions(p.UserEmail, p.Permissions)
+-	if !hasBankPermission(perms) {
+-		writeErr(w, http.StatusForbidden, "forbidden")
+-		return
+-	}
+-
+-	bearer, err := s.cachedEbankM2MToken(r.Context())
+-	if err != nil {
+-		s.log.Error("ebank m2m token", "err", err, "email", p.UserEmail)
+-		writeErr(w, http.StatusBadGateway, "upstream auth failed")
+-		return
+-	}
+-
+-	upstream := s.cfg.EbankBaseURL + upstreamPath
+-	if q := r.URL.RawQuery; q != "" {
+-		upstream += "?" + q
+-	}
+-	var body io.Reader
+-	if r.Body != nil && r.Method != http.MethodGet && r.Method != http.MethodHead {
+-		body = r.Body
+-	}
+-	// EbankBaseURL is server config; path is a fixed allowlist from route handlers.
+-	req, err := http.NewRequestWithContext(r.Context(), r.Method, upstream, body) // #nosec G704
+-	if err != nil {
+-		writeErr(w, http.StatusInternalServerError, "proxy error")
+-		return
+-	}
+-	if ct := r.Header.Get("Content-Type"); ct != "" {
+-		req.Header.Set("Content-Type", ct)
+-	}
+-	req.Header.Set("Authorization", "Bearer "+bearer)
+-	req.ContentLength = r.ContentLength
+-	req.Header.Set("X-Kalke-User-Email", p.UserEmail)
+-	req.Header.Set("X-Kalke-User-Sub", p.UserSub)
+-	if ip := clientIP(r); ip != "" {
+-		req.Header.Set("X-Kalke-Client-IP", ip)
+-	}
+-	if ua := strings.TrimSpace(r.UserAgent()); ua != "" {
+-		req.Header.Set("X-Kalke-User-Agent", ua)
+-	}
+-	if s.cfg.EbankUserForwardSecret != "" {
+-		req.Header.Set("X-Kalke-Forward-Secret", s.cfg.EbankUserForwardSecret)
+-	}
+-
+-	resp, err := s.ebankHTTP.Do(req) // #nosec G704
+-	if err != nil {
+-		s.log.Error("ebank proxy", "err", err, "email", p.UserEmail, "path", upstreamPath)
+-		writeErr(w, http.StatusBadGateway, "upstream unavailable")
+-		return
+-	}
+-	defer func() { _ = resp.Body.Close() }()
+-
+-	for _, h := range []string{
+-		"Content-Type",
+-		"Cache-Control",
+-		"Retry-After",
+-		"X-RateLimit-Limit",
+-		"X-RateLimit-Remaining",
+-		"X-Request-ID",
+-	} {
+-		if v := resp.Header.Get(h); v != "" {
+-			w.Header().Set(h, v)
+-		}
+-	}
+-	w.WriteHeader(resp.StatusCode)
+-	_, _ = io.Copy(w, io.LimitReader(resp.Body, 8<<20))
+-}
+-
+-func (s *Server) cachedEbankM2MToken(ctx context.Context) (string, error) {
+-	s.ebankM2M.mu.Lock()
+-	defer s.ebankM2M.mu.Unlock()
+-	if s.ebankM2M.token != "" && time.Now().Before(s.ebankM2M.expiry) {
+-		return s.ebankM2M.token, nil
+-	}
+-	token, ttl, err := s.kc.ClientCredentialsToken(
+-		ctx,
+-		s.cfg.EbankM2MClientID,
+-		s.cfg.EbankM2MClientSecret,
+-	)
+-	if err != nil {
+-		return "", err
+-	}
+-	skew := 30 * time.Second
+-	if ttl > 2*skew {
+-		ttl -= skew
+-	}
+-	s.ebankM2M.token = token
+-	s.ebankM2M.expiry = time.Now().Add(ttl)
+-	return token, nil
+-}
+-
+-func hasBankPermission(perms []string) bool {
+-	for _, p := range perms {
+-		if p == "bank:write" || p == "bank:demo" || p == "admin" {
+-			return true
+-		}
+-	}
+-	return false
+-}
++package httpapi
++
++import (
++	"context"
++	"io"
++	"net/http"
++	"strings"
++	"time"
++)
++
++func (s *Server) proxyBankBootstrap(w http.ResponseWriter, r *http.Request) {
++	s.proxyEbank(w, r, "/v1/demo/bootstrap")
++}
++
++func (s *Server) proxyBankMeta(w http.ResponseWriter, r *http.Request) {
++	s.proxyEbank(w, r, "/v1/demo/meta")
++}
++
++func (s *Server) proxyBankAccount(w http.ResponseWriter, r *http.Request) {
++	s.proxyEbank(w, r, "/v1/me/account")
++}
++
++func (s *Server) proxyBankTransactions(w http.ResponseWriter, r *http.Request) {
++	s.proxyEbank(w, r, "/v1/me/transactions")
++}
++
++func (s *Server) proxyBankTransfer(w http.ResponseWriter, r *http.Request) {
++	s.proxyEbank(w, r, "/v1/me/transfer")
++}
++
++func (s *Server) proxyBankWithdraw(w http.ResponseWriter, r *http.Request) {
++	s.proxyEbank(w, r, "/v1/me/withdraw")
++}
++
++func (s *Server) proxyBankOnboarding(w http.ResponseWriter, r *http.Request) {
++	s.proxyEbank(w, r, "/v1/onboarding")
++}
++
++func (s *Server) proxyBankOnboardingStart(w http.ResponseWriter, r *http.Request) {
++	s.proxyEbank(w, r, "/v1/onboarding/start")
++}
++
++func (s *Server) proxyBankOnboardingConsent(w http.ResponseWriter, r *http.Request) {
++	s.proxyEbank(w, r, "/v1/onboarding/consent")
++}
++
++func (s *Server) proxyBankOnboardingSkip(w http.ResponseWriter, r *http.Request) {
++	s.proxyEbank(w, r, "/v1/onboarding/skip")
++}
++
++func (s *Server) proxyBankOnboardingDocuments(w http.ResponseWriter, r *http.Request) {
++	s.proxyEbank(w, r, "/v1/onboarding/documents")
++}
++
++func (s *Server) proxyBankOnboardingComplete(w http.ResponseWriter, r *http.Request) {
++	s.proxyEbank(w, r, "/v1/onboarding/complete")
++}
++
++func (s *Server) proxyEbank(w http.ResponseWriter, r *http.Request, upstreamPath string) {
++	if s.cfg.EbankBaseURL == "" {
++		writeErr(w, http.StatusServiceUnavailable, "bank proxy not configured")
++		return
++	}
++	p, err := s.principalFromRequest(r)
++	if err != nil {
++		writeErr(w, http.StatusUnauthorized, "unauthorized")
++		return
++	}
++	perms := s.effectivePermissions(p.UserEmail, p.Permissions)
++	if !hasBankPermission(perms) {
++		writeErr(w, http.StatusForbidden, "forbidden")
++		return
++	}
++
++	bearer, err := s.cachedEbankM2MToken(r.Context())
++	if err != nil {
++		s.log.Error("ebank m2m token", "err", err, "email", p.UserEmail)
++		writeErr(w, http.StatusBadGateway, "upstream auth failed")
++		return
++	}
++
++	upstream := s.cfg.EbankBaseURL + upstreamPath
++	if q := r.URL.RawQuery; q != "" {
++		upstream += "?" + q
++	}
++	var body io.Reader
++	if r.Body != nil && r.Method != http.MethodGet && r.Method != http.MethodHead {
++		body = r.Body
++	}
++	// EbankBaseURL is server config; path is a fixed allowlist from route handlers.
++	req, err := http.NewRequestWithContext(r.Context(), r.Method, upstream, body) // #nosec G704
++	if err != nil {
++		writeErr(w, http.StatusInternalServerError, "proxy error")
++		return
++	}
++	if ct := r.Header.Get("Content-Type"); ct != "" {
++		req.Header.Set("Content-Type", ct)
++	}
++	req.Header.Set("Authorization", "Bearer "+bearer)
++	req.ContentLength = r.ContentLength
++	req.Header.Set("X-Kalke-User-Email", p.UserEmail)
++	req.Header.Set("X-Kalke-User-Sub", p.UserSub)
++	if ip := clientIP(r); ip != "" {
++		req.Header.Set("X-Kalke-Client-IP", ip)
++	}
++	if ua := strings.TrimSpace(r.UserAgent()); ua != "" {
++		req.Header.Set("X-Kalke-User-Agent", ua)
++	}
++	if s.cfg.EbankUserForwardSecret != "" {
++		req.Header.Set("X-Kalke-Forward-Secret", s.cfg.EbankUserForwardSecret)
++	}
++
++	resp, err := s.ebankHTTP.Do(req) // #nosec G704
++	if err != nil {
++		s.log.Error("ebank proxy", "err", err, "email", p.UserEmail, "path", upstreamPath)
++		writeErr(w, http.StatusBadGateway, "upstream unavailable")
++		return
++	}
++	defer func() { _ = resp.Body.Close() }()
++
++	for _, h := range []string{
++		"Content-Type",
++		"Cache-Control",
++		"Retry-After",
++		"X-RateLimit-Limit",
++		"X-RateLimit-Remaining",
++		"X-Request-ID",
++	} {
++		if v := resp.Header.Get(h); v != "" {
++			w.Header().Set(h, v)
++		}
++	}
++	w.WriteHeader(resp.StatusCode)
++	_, _ = io.Copy(w, io.LimitReader(resp.Body, 8<<20))
++}
++
++func (s *Server) cachedEbankM2MToken(ctx context.Context) (string, error) {
++	s.ebankM2M.mu.Lock()
++	defer s.ebankM2M.mu.Unlock()
++	if s.ebankM2M.token != "" && time.Now().Before(s.ebankM2M.expiry) {
++		return s.ebankM2M.token, nil
++	}
++	token, ttl, err := s.kc.ClientCredentialsToken(
++		ctx,
++		s.cfg.EbankM2MClientID,
++		s.cfg.EbankM2MClientSecret,
++	)
++	if err != nil {
++		return "", err
++	}
++	skew := 30 * time.Second
++	if ttl > 2*skew {
++		ttl -= skew
++	}
++	s.ebankM2M.token = token
++	s.ebankM2M.expiry = time.Now().Add(ttl)
++	return token, nil
++}
++
++func hasBankPermission(perms []string) bool {
++	for _, p := range perms {
++		if p == "bank:write" || p == "bank:demo" || p == "admin" {
++			return true
++		}
++	}
++	return false
++}
+diff --git a/internal/httpapi/bank_test.go b/internal/httpapi/bank_test.go
+index 49e9244..d49e29e 100644
+--- a/internal/httpapi/bank_test.go
++++ b/internal/httpapi/bank_test.go
+@@ -1,18 +1,18 @@
+-package httpapi
+-
+-import "testing"
+-
+-func TestHasBankPermission(t *testing.T) {
+-	if !hasBankPermission([]string{"bank:demo"}) {
+-		t.Fatal("bank:demo should allow")
+-	}
+-	if !hasBankPermission([]string{"bank:write"}) {
+-		t.Fatal("bank:write should allow")
+-	}
+-	if !hasBankPermission([]string{"admin"}) {
+-		t.Fatal("admin should allow")
+-	}
+-	if hasBankPermission([]string{"extract:write"}) {
+-		t.Fatal("extract:write alone should deny")
+-	}
+-}
++package httpapi
++
++import "testing"
++
++func TestHasBankPermission(t *testing.T) {
++	if !hasBankPermission([]string{"bank:demo"}) {
++		t.Fatal("bank:demo should allow")
++	}
++	if !hasBankPermission([]string{"bank:write"}) {
++		t.Fatal("bank:write should allow")
++	}
++	if !hasBankPermission([]string{"admin"}) {
++		t.Fatal("admin should allow")
++	}
++	if hasBankPermission([]string{"extract:write"}) {
++		t.Fatal("extract:write alone should deny")
++	}
++}
+diff --git a/internal/httpapi/server.go b/internal/httpapi/server.go
+index 5459b08..9aa2686 100644
+--- a/internal/httpapi/server.go
++++ b/internal/httpapi/server.go
+@@ -29,21 +29,21 @@ import (
+ const sessionCookie = "kalke_session"
+ 
+ type Server struct {
+-	cfg      config.Config
+-	store    *store.Store
+-	kc       *keycloak.Client
+-	admin    *keycloak.AdminClient
+-	rdb      *redis.Client
+-	pending  *signup.Store
+-	loginOTP *otp.Store
+-	resetOTP *otp.Store
+-	mailer   mail.Mailer
+-	proxy    *httputil.ReverseProxy
+-	pdeHTTP  *http.Client
++	cfg       config.Config
++	store     *store.Store
++	kc        *keycloak.Client
++	admin     *keycloak.AdminClient
++	rdb       *redis.Client
++	pending   *signup.Store
++	loginOTP  *otp.Store
++	resetOTP  *otp.Store
++	mailer    mail.Mailer
++	proxy     *httputil.ReverseProxy
++	pdeHTTP   *http.Client
+ 	ebankHTTP *http.Client
+-	m2m      m2mCache
+-	ebankM2M m2mCache
+-	log      *slog.Logger
++	m2m       m2mCache
++	ebankM2M  m2mCache
++	log       *slog.Logger
+ }
+ 
+ type sessionPrincipal struct {
+-- 
+2.43.0
+
