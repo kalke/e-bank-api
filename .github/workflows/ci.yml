@@ -16,6 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -23,6 +25,10 @@ jobs:
           cache-dependency-path: requirements-dev.txt
       - run: make setup
       - run: make lint-ci
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   test:
     name: Tests
@@ -54,6 +60,7 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://ebank:ebank@localhost:5432/ebank_test
       REDIS_URL: redis://localhost:6379/0
       OIDC_ENABLED: "false"
+      LEGACY_CHALLENGE_ROUTES: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -101,8 +108,10 @@ jobs:
             REDIS_URL
             OIDC_ISSUER
             OIDC_AUDIENCE
+            M2M_USER_FORWARD_SECRET
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           REDIS_URL: ${{ secrets.REDIS_URL }}
           OIDC_ISSUER: ${{ secrets.OIDC_ISSUER }}
           OIDC_AUDIENCE: ${{ secrets.OIDC_AUDIENCE }}
+          M2M_USER_FORWARD_SECRET: ${{ secrets.M2M_USER_FORWARD_SECRET }}

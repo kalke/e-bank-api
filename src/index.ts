@@ -8,9 +8,16 @@ export interface Env {
 	OIDC_AUDIENCE: string;
 	OIDC_ENABLED: string;
 	IDEMPOTENCY_ENABLED: string;
+	RATE_LIMIT_ENABLED: string;
+	M2M_USER_FORWARD_SECRET: string;
 	CORS_ORIGINS: string;
 	LOG_LEVEL: string;
 	ENV: string;
+	LEGACY_CHALLENGE_ROUTES: string;
+	WELCOME_AMOUNT: string;
+	WELCOME_CURRENCY: string;
+	MAX_TRANSFER_AMOUNT: string;
+	MAX_WITHDRAW_AMOUNT: string;
 }
 
 function apiEnvVars(env: Env): Record<string, string> {
@@ -21,10 +28,17 @@ function apiEnvVars(env: Env): Record<string, string> {
 		OIDC_ISSUER: env.OIDC_ISSUER,
 		OIDC_AUDIENCE: env.OIDC_AUDIENCE || "e-bank-api",
 		IDEMPOTENCY_ENABLED: env.IDEMPOTENCY_ENABLED || "true",
+		RATE_LIMIT_ENABLED: env.RATE_LIMIT_ENABLED || "true",
+		M2M_USER_FORWARD_SECRET: env.M2M_USER_FORWARD_SECRET || "",
 		RESET_ENABLED: "false",
+		LEGACY_CHALLENGE_ROUTES: env.LEGACY_CHALLENGE_ROUTES || "false",
 		CORS_ORIGINS: env.CORS_ORIGINS || "https://kalke.dev,https://www.kalke.dev",
 		LOG_LEVEL: env.LOG_LEVEL || "INFO",
 		ENV: env.ENV || "production",
+		WELCOME_AMOUNT: env.WELCOME_AMOUNT || "10000.00",
+		WELCOME_CURRENCY: env.WELCOME_CURRENCY || "USD",
+		MAX_TRANSFER_AMOUNT: env.MAX_TRANSFER_AMOUNT || "10000.00",
+		MAX_WITHDRAW_AMOUNT: env.MAX_WITHDRAW_AMOUNT || "10000.00",
 	};
 }
 

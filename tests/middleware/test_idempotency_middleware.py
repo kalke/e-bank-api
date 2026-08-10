@@ -2,13 +2,22 @@ import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
-from fastapi import Body, FastAPI
+from fastapi import Body, FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from redis.exceptions import RedisError
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.idempotency import IdempotencyService
 from app.middleware.idempotency_middleware import IdempotencyMiddleware
+
+
+class FakeAuthMiddleware(BaseHTTPMiddleware):
+    """Simulate auth deps setting request.state.user_id from X-Test-User."""
+
+    async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
+        request.state.user_id = request.headers.get("X-Test-User", "user-a")
+        return await call_next(request)
 
 
 @pytest.fixture
@@ -18,7 +27,10 @@ def idempotency_app() -> FastAPI:
     app = FastAPI()
     fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
     app.state.idempotency_service = IdempotencyService(fake_redis)
+    # Starlette: last added runs first on the request. FakeAuth must be outer so
+    # request.state.user_id is set before IdempotencyMiddleware runs.
     app.add_middleware(IdempotencyMiddleware)
+    app.add_middleware(FakeAuthMiddleware)
 
     handler_calls = {"count": 0}
 
@@ -91,7 +103,7 @@ class TestIdempotencyMiddleware:
         body = {"type": "deposit", "destination": "200", "amount": 15}
 
         async def lock() -> None:
-            key = await service.generate_key("/event", "POST", "200", body)
+            key = await service.generate_key("/event", "POST", "user-a", body)
             await service.set_processing(key, "locked")
 
         asyncio.run(lock())
@@ -111,7 +123,7 @@ class TestIdempotencyMiddleware:
         body = {"type": "deposit", "destination": "300", "amount": 20}
 
         async def seed_failed() -> None:
-            key = await service.generate_key("/event", "POST", "300", body)
+            key = await service.generate_key("/event", "POST", "user-a", body)
             await service.set_processing(key, "hash")
             await service.mark_failed(key)
 
@@ -160,14 +172,9 @@ class TestIdempotencyMiddleware:
         client: TestClient,
         idempotency_app: FastAPI,
     ) -> None:
-        first = client.post(
-            "/event",
-            json={"type": "deposit", "destination": "500", "amount": 8},
-        )
-        second = client.post(
-            "/event",
-            json={"type": "deposit", "destination": "600", "amount": 8},
-        )
+        body = {"type": "deposit", "destination": "500", "amount": 8}
+        first = client.post("/event", json=body, headers={"X-Test-User": "alice"})
+        second = client.post("/event", json=body, headers={"X-Test-User": "bob"})
 
         assert first.status_code == 201
         assert second.status_code == 201

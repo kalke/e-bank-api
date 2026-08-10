@@ -12,10 +12,26 @@ os.environ.setdefault(
     os.getenv("DATABASE_URL_TEST", "sqlite+aiosqlite:///:memory:"),
 )
 os.environ["OIDC_ENABLED"] = "false"
+os.environ.setdefault("LEGACY_CHALLENGE_ROUTES", "true")
+os.environ.setdefault("IDEMPOTENCY_ENABLED", "false")
+os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
 
-from app.core.database import Base, get_db
-from app.main import app
-from app.repositories.account_repository import AccountRepository
+from app.core.config import get_settings
+
+get_settings.cache_clear()
+
+from app.core.database import Base, get_db  # noqa: E402
+from app.main import app  # noqa: E402
+from app.models import (  # noqa: E402, F401
+    Account,
+    Consent,
+    DemoGrant,
+    OnboardingDocument,
+    OnboardingSession,
+    Transaction,
+    User,
+)
+from app.repositories.account_repository import AccountRepository  # noqa: E402
 
 TEST_DATABASE_URL = os.environ["DATABASE_URL"]
 

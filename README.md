@@ -1,8 +1,15 @@
 # E-Bank API
 
-Small FastAPI bank API: reset state, query balance, and process deposit / withdraw / transfer events. Postgres for persistence, Redis for optional idempotency, OIDC via sibling [`kalke-auth`](https://github.com/kalke/kalke-auth).
+**DEMO ONLY** — FastAPI virtual bank for the [kalke.dev](https://kalke.dev) portfolio.
+Postgres ledger, Redis idempotency/rate-limits, OIDC via sibling
+[`kalke-auth`](https://github.com/kalke/kalke-auth).
 
-Interactive docs at **`/docs`** when the server is running. Hosted sandbox: [kalke.dev](https://kalke.dev) (login required).
+Every signed-in demo user can bootstrap once and receive **USD 10,000.00** play
+money. Due diligence onboarding is optional and skippable (PDE document extract
+metadata only — no raw files stored here).
+
+Interactive docs at **`/docs`** when the server is running (non-production).
+Hosted API: [ebank.kalke.dev](https://ebank.kalke.dev) (login via auth BFF).
 
 ## Quick start (Docker)
 
@@ -39,8 +46,8 @@ curl -sS -H "Authorization: Bearer $TOKEN" \
 | `make setup-oidc` | Enable local OIDC_* pointing at kalke-auth |
 | `make up-all` | `auth-up` + API stack |
 | `make up` | API + Postgres + Redis (needs network `kalke-auth`) |
-| `make auth-up` / `auth-down` | Manage sibling kalke-auth |
-| `make auth-token` / `ebank-m2m-token` | Human / M2M JWT |
+| `make auth-up` / `make auth-down` | Manage sibling kalke-auth |
+| `make auth-token` / `make ebank-m2m-token` | Human / M2M JWT |
 | `make smoke-oidc` | Token → `POST /event` (expect 422) |
 | `make test` / `make lint` / `make ci` | Quality |
 | `make migrate` | Apply Alembic migrations |
@@ -49,25 +56,27 @@ curl -sS -H "Authorization: Bearer $TOKEN" \
 
 | Item | Value |
 |---|---|
-| AuthN | `Authorization: Bearer <JWT>` (OIDC / RS256) |
+| AuthN | `Authorization: Bearer <JWT>` (OIDC / RS256) or BFF M2M + user-forward headers |
 | Issuer | `OIDC_ISSUER` (must match JWT `iss`) |
 | Audience | `e-bank-api` |
-| AuthZ | access-token claim `permissions` must include `bank:write` or `admin` |
-| Public | `GET /health` only |
-| Protected | `GET /balance`, `POST /event`, `POST /reset` |
-
-Local smoke clients: `kalke-cli` (password) and `ebank-m2m` (client credentials) from kalke-auth.
+| AuthZ | access-token claim `permissions` must include `bank:write`, `bank:demo`, or `admin` |
+| Public | `GET /health`, `GET /ready`, `GET /v1/demo/meta` |
+| Demo | `/v1/demo/*`, `/v1/me/*`, `/v1/onboarding/*` (ownership-scoped) |
+| Legacy | `/balance`, `/event`, `/reset` when `LEGACY_CHALLENGE_ROUTES=true` |
 
 Set `OIDC_ENABLED=false` only for unit tests (CI already does this).
 
-## API
+## Demo API
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/health` | Liveness |
-| `GET` | `/balance?account_id=` | Balance (404 if missing) |
-| `POST` | `/event` | `{type, amount, origin?, destination?}` |
-| `POST` | `/reset` | Wipe accounts |
+| `GET` | `/v1/demo/meta` | Disclaimer + welcome amount |
+| `POST` | `/v1/demo/bootstrap` | Create checking account + one-time $10,000 grant |
+| `GET` | `/v1/me/account` | Owned account + balance |
+| `GET` | `/v1/me/transactions` | Activity |
+| `POST` | `/v1/me/transfer` | Transfer to another account id |
+| `POST` | `/v1/me/withdraw` | Capped demo withdraw |
+| `POST` | `/v1/onboarding/skip` | Skip due diligence and continue |
 
 ## Configuration
 
@@ -76,10 +85,12 @@ See [`.env.example`](.env.example). Important vars:
 | Var | Purpose |
 |---|---|
 | `DATABASE_URL` | Async SQLAlchemy URL (`postgresql+asyncpg://…`) |
-| `REDIS_URL` | Idempotency store |
+| `REDIS_URL` | Idempotency / rate-limit store |
 | `OIDC_ISSUER` / `OIDC_AUDIENCE` | JWT validation |
 | `OIDC_DISCOVERY_URL` | Reachable discovery/JWKS inside Docker |
+| `M2M_USER_FORWARD_SECRET` | Trusted BFF user-forward |
 | `CORS_ORIGINS` | Browser sandbox origins |
+| `LEGACY_CHALLENGE_ROUTES` | Enable legacy `/event` routes (CI/dev) |
 
 ## Cloudflare deploy
 
@@ -90,12 +101,16 @@ Production target: **`ebank.kalke.dev`** (Workers + Containers) with Neon Postgr
 ```text
 e-bank-api/
 ├── app/
-│   ├── auth/           # OIDC JWT validation
-│   ├── core/           # db, logging, middleware
+│   ├── api/            # FastAPI routers
+│   ├── auth/           # OIDC JWT + BFF forward
+│   ├── core/           # db, logging, middleware, rate limit
+│   ├── domain/         # Money helpers
 │   ├── middleware/     # idempotency
+│   ├── models/
 │   ├── repositories/
-│   ├── main.py
-│   └── services.py
+│   ├── schemas/
+│   ├── services/
+│   └── main.py
 ├── alembic/
 ├── tests/
 ├── src/                # Cloudflare Worker proxy

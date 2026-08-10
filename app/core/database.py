@@ -1,4 +1,3 @@
-import os
 from collections.abc import AsyncGenerator
 
 from sqlalchemy import text
@@ -9,9 +8,10 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import DeclarativeBase
 
-from app.core.config import settings
+from app.core.config import get_settings
 
-DATABASE_URL = os.getenv("DATABASE_URL", settings.database_url)
+settings = get_settings()
+DATABASE_URL = settings.database_url
 
 engine = create_async_engine(
     DATABASE_URL,

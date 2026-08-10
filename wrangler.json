@@ -13,10 +13,16 @@
 	"vars": {
 		"OIDC_ENABLED": "true",
 		"IDEMPOTENCY_ENABLED": "true",
+		"RATE_LIMIT_ENABLED": "true",
 		"RESET_ENABLED": "false",
+		"LEGACY_CHALLENGE_ROUTES": "false",
 		"CORS_ORIGINS": "https://kalke.dev,https://www.kalke.dev",
 		"LOG_LEVEL": "INFO",
-		"ENV": "production"
+		"ENV": "production",
+		"WELCOME_AMOUNT": "10000.00",
+		"WELCOME_CURRENCY": "USD",
+		"MAX_TRANSFER_AMOUNT": "10000.00",
+		"MAX_WITHDRAW_AMOUNT": "10000.00"
 	},
 	"containers": [
 		{

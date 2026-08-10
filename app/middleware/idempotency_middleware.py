@@ -25,20 +25,26 @@ DEFAULT_EXCLUDE_PATHS = "/health,/metrics"
 
 
 def get_excluded_paths() -> frozenset[str]:
-    raw = os.getenv("IDEMPOTENCY_EXCLUDE_PATHS", DEFAULT_EXCLUDE_PATHS)
+    try:
+        from app.core.config import get_settings
+
+        raw = get_settings().idempotency_exclude_paths
+    except Exception:
+        raw = os.getenv("IDEMPOTENCY_EXCLUDE_PATHS", DEFAULT_EXCLUDE_PATHS)
     return frozenset(path.strip() for path in raw.split(",") if path.strip())
 
 
 def extract_user_id(request: Request, payload: dict[str, Any]) -> str | None:
+    """Use authenticated subject only — never body-derived account fields."""
     user_id = getattr(request.state, "user_id", None)
     if user_id:
         return str(user_id)
-
-    for key in ("account_id", "origin", "destination"):
-        value = payload.get(key)
-        if value:
-            return str(value)
-
+    principal = getattr(request.state, "principal", None)
+    if principal is not None and getattr(principal, "subject", None):
+        return str(principal.subject)
+    # Dev/test without auth middleware populating state: stable anonymous key
+    # for excluded/local flows. Do not use request body IDs (spoofable).
+    _ = payload
     return None
 
 

@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-import json
 import os
 import threading
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse, urlunparse
-from urllib.request import urlopen
 
+import httpx
 import jwt
 from jwt import PyJWKClient
+
+from app.core.config import get_settings
 
 
 class AuthError(Exception):
@@ -24,9 +25,19 @@ class Principal:
     client: str = ""
     email: str = ""
     permissions: list[str] = field(default_factory=list)
+    is_m2m: bool = False
 
     def has_permission(self, want: str) -> bool:
-        return "admin" in self.permissions or want in self.permissions
+        if "admin" in self.permissions:
+            return True
+        if want in self.permissions:
+            return True
+        return want == "bank:write" and "bank:demo" in self.permissions
+
+
+HEADER_USER_SUB = "X-Kalke-User-Sub"
+HEADER_USER_EMAIL = "X-Kalke-User-Email"
+HEADER_FORWARD_SECRET = "X-Kalke-Forward-Secret"
 
 
 class OIDCAuthenticator:
@@ -68,11 +79,14 @@ class OIDCAuthenticator:
             raise AuthError()
 
         permissions = _permissions_from_claims(claims)
+        client = str(claims.get("azp") or claims.get("client_id") or "").strip()
+        is_m2m = _is_m2m_claims(claims)
         return Principal(
             subject=sub,
-            client=str(claims.get("azp") or "").strip(),
+            client=client,
             email=str(claims.get("email") or "").strip(),
             permissions=permissions,
+            is_m2m=is_m2m,
         )
 
 
@@ -81,7 +95,7 @@ _lock = threading.Lock()
 
 
 def oidc_enabled() -> bool:
-    return os.getenv("OIDC_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+    return get_settings().oidc_enabled
 
 
 def get_authenticator() -> OIDCAuthenticator | None:
@@ -93,13 +107,14 @@ def get_authenticator() -> OIDCAuthenticator | None:
     with _lock:
         if _authenticator is not None:
             return _authenticator
-        issuer = os.getenv("OIDC_ISSUER", "").strip()
-        audience = os.getenv("OIDC_AUDIENCE", "").strip()
+        settings = get_settings()
+        issuer = settings.oidc_issuer.strip()
+        audience = settings.oidc_audience.strip()
         if not issuer or not audience:
             raise RuntimeError(
                 "OIDC_ISSUER and OIDC_AUDIENCE are required when OIDC_ENABLED=true"
             )
-        discovery = os.getenv("OIDC_DISCOVERY_URL", "").strip() or None
+        discovery = settings.oidc_discovery_url.strip() or None
         _authenticator = OIDCAuthenticator(issuer, audience, discovery)
         return _authenticator
 
@@ -110,10 +125,44 @@ def reset_authenticator() -> None:
         _authenticator = None
 
 
+def resolve_effective_principal(
+    bearer_token: str,
+    headers: dict[str, str],
+) -> Principal:
+    """Authenticate JWT and optionally rewrite subject from trusted BFF forward."""
+    authenticator = get_authenticator()
+    if authenticator is None:
+        raise AuthError("oidc disabled")
+    principal = authenticator.authenticate(bearer_token)
+    if not principal.is_m2m:
+        return principal
+
+    settings = get_settings()
+    expected = settings.m2m_user_forward_secret.strip()
+    provided = (headers.get(HEADER_FORWARD_SECRET) or "").strip()
+    if not expected or provided != expected:
+        # M2M without trusted forward stays as service principal
+        return principal
+
+    forwarded_sub = (headers.get(HEADER_USER_SUB) or "").strip()
+    if not forwarded_sub:
+        raise AuthError("missing forwarded user")
+    forwarded_email = (headers.get(HEADER_USER_EMAIL) or "").strip()
+    return Principal(
+        subject=forwarded_sub,
+        client=principal.client,
+        email=forwarded_email or principal.email,
+        permissions=principal.permissions or ["bank:write"],
+        is_m2m=False,
+    )
+
+
 def _discover(base: str) -> tuple[str, str]:
     url = f"{base}/.well-known/openid-configuration"
-    with urlopen(url, timeout=10) as resp:
-        doc: dict[str, Any] = json.loads(resp.read().decode())
+    with httpx.Client(timeout=10.0) as client:
+        resp = client.get(url)
+        resp.raise_for_status()
+        doc: dict[str, Any] = resp.json()
     jwks = doc.get("jwks_uri")
     if not jwks:
         raise RuntimeError("oidc discovery: missing jwks_uri")
@@ -144,3 +193,26 @@ def _permissions_from_claims(claims: dict[str, Any]) -> list[str]:
     if isinstance(scope, str) and scope.strip():
         return scope.split()
     return []
+
+
+def _is_m2m_claims(claims: dict[str, Any]) -> bool:
+    if claims.get("email"):
+        return False
+    # client_credentials tokens typically have azp/client_id and grant_type
+    grant = str(claims.get("grant_type") or "").lower()
+    if grant == "client_credentials":
+        return True
+    preferred = str(claims.get("preferred_username") or "")
+    if preferred.endswith("-service") or preferred.endswith("-m2m"):
+        return True
+    # Heuristic: service accounts often have sub == client id style without @
+    azp = str(claims.get("azp") or claims.get("client_id") or "")
+    sub = str(claims.get("sub") or "")
+    if azp and sub and ("service-account" in preferred or azp in sub):
+        return True
+    return "service-account-" in preferred
+
+
+# Keep env override for tests that monkeypatch before settings cache
+def _env_oidc_enabled() -> bool:
+    return os.getenv("OIDC_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
