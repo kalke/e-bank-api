@@ -14,10 +14,23 @@ from app.schemas import (
     TransferIn,
     WithdrawIn,
 )
-from app.services.demo_service import DemoBankService
+from app.services.demo_service import DemoAccountView, DemoBankService
 from app.services.onboarding_service import OnboardingService
 
 router = APIRouter(prefix="/v1", tags=["demo"])
+
+
+def _demo_account_out(view: DemoAccountView) -> DemoAccountOut:
+    return DemoAccountOut(
+        id=view.id,
+        balance=view.balance,
+        currency=view.currency,
+        kind=view.kind,
+        status=view.status,
+        onboarding_status=view.onboarding_status,
+        demo_credited=view.demo_credited,
+        demo=True,
+    )
 
 
 async def _enforce_rate_limit(request: Request, principal: Principal) -> None:
@@ -63,16 +76,7 @@ async def bootstrap(
         email=principal.email or None,
         request_id=getattr(request.state, "request_id", None),
     )
-    return DemoAccountOut(
-        id=view.id,
-        balance=view.balance,
-        currency=view.currency,
-        kind=view.kind,
-        status=view.status,
-        onboarding_status=view.onboarding_status,
-        demo_credited=view.demo_credited,
-        demo=True,
-    )
+    return _demo_account_out(view)
 
 
 @router.get("/me/account", response_model=DemoAccountOut)
@@ -81,16 +85,7 @@ async def my_account(
     principal: Principal = Depends(require_authenticated_bank_write),
 ) -> DemoAccountOut:
     view = await DemoBankService(db).get_my_account(principal.subject)
-    return DemoAccountOut(
-        id=view.id,
-        balance=view.balance,
-        currency=view.currency,
-        kind=view.kind,
-        status=view.status,
-        onboarding_status=view.onboarding_status,
-        demo_credited=view.demo_credited,
-        demo=True,
-    )
+    return _demo_account_out(view)
 
 
 @router.get("/me/transactions")

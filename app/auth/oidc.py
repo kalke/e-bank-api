@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import threading
 from dataclasses import dataclass, field
 from typing import Any
@@ -212,7 +211,3 @@ def _is_m2m_claims(claims: dict[str, Any]) -> bool:
         return True
     return "service-account-" in preferred
 
-
-# Keep env override for tests that monkeypatch before settings cache
-def _env_oidc_enabled() -> bool:
-    return os.getenv("OIDC_ENABLED", "true").lower() in {"1", "true", "yes", "on"}

@@ -10,10 +10,6 @@ htmlcov/
 .env
 .env.*
 !.env.example
-.dev.vars
-.dev.vars.*
-node_modules/
-.wrangler/
 dist/
 *.db
 .pytest-e-bank.db
