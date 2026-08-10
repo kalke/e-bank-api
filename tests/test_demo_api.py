@@ -32,7 +32,7 @@ def test_skip_opens_account_with_number(client: TestClient) -> None:
     assert body["onboarding_status"] == "skipped"
     assert body["balance"] == "10000.00"
     assert body["display_number"]
-    assert body["account_number"] >= 100000
+    assert body["account_number"] >= 1
     assert 0 <= body["digit"] <= 9
     UUID(body["id"])  # public account id is UUID v4
 

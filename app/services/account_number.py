@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.models.account import Account
 
-ACCOUNT_NUMBER_START = 100000
+ACCOUNT_NUMBER_START = 1
 
 
 @dataclass(frozen=True)
