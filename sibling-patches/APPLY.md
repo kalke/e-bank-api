@@ -1,63 +1,40 @@
 # Sibling repo patches (demo bank)
 
-This Cloud Agent only has write access to **`kalke/e-bank-api`**. The
-`kalke-auth` and `kalke` changes are complete and exported here as patches
-you can apply and push as yourself.
+Apply these on **main** (or a short-lived `feat/...` branch you merge yourself).
+This agent can only write **`kalke/e-bank-api`** — already on `main`.
 
-## Apply `kalke-auth`
+## `kalke-auth` → push `main`
 
 ```bash
 cd ../kalke-auth
-git checkout -b cursor/demo-bank-bff-1193
+git checkout main && git pull
 git am ../e-bank-api/sibling-patches/kalke-auth-demo-bank.patch
-# or: git apply ../e-bank-api/sibling-patches/kalke-auth-demo-bank.patch && git add -A && git commit
-git push -u origin cursor/demo-bank-bff-1193
+# if am fails: git apply ... && git add -A && git commit -m "feat: proxy /v1/bank to e-bank-api"
+git push origin main
 ```
 
-What it adds:
-
-- Cookie BFF routes `/v1/bank/*` → `https://ebank.kalke.dev` with M2M + user-forward
-- `EBANK_*` config / `prod.env` sync on deploy (same pattern as PDE_*)
-- Every signed-in user gets `bank:demo` for the playground
-
-### GitHub secrets to set on `kalke-auth` (for deploy-on-main)
+GitHub secrets (deploy-on-main):
 
 | Secret | Example |
 |--------|---------|
 | `EBANK_BASE_URL` | `https://ebank.kalke.dev` |
 | `EBANK_M2M_CLIENT_ID` | `ebank-m2m` |
-| `EBANK_M2M_CLIENT_SECRET` | from Keycloak `ebank-m2m` |
-| `EBANK_USER_FORWARD_SECRET` | shared with e-bank `M2M_USER_FORWARD_SECRET` |
+| `EBANK_M2M_CLIENT_SECRET` | Keycloak `ebank-m2m` secret |
+| `EBANK_USER_FORWARD_SECRET` | same as e-bank `M2M_USER_FORWARD_SECRET` |
 
-## Apply `kalke` (portfolio)
+## `kalke` (portfolio) → push `main`
 
 ```bash
 cd ../kalke
-git checkout -b cursor/demo-bank-ui-1193
+git checkout main && git pull
 git am ../e-bank-api/sibling-patches/kalke-demo-bank-ui.patch
-git push -u origin cursor/demo-bank-ui-1193
+git push origin main
 ```
 
-What it adds:
+## Merge / deploy order
 
-- `/playground/bank`, `/onboarding`, `/transfer`, `/activity`
-- Skippable due diligence (optional PDE uploads)
-- DEMO badge + `$10,000` welcome bootstrap via BFF
+1. **e-bank-api** `main` — done (Cloudflare Containers)
+2. **kalke-auth** `main` — you push (EC2)
+3. **kalke** `main` — you push (Workers)
 
-## Merge order (triggers existing CI/CD)
-
-1. Merge **e-bank-api** `cursor/demo-bank-api-1193` → `main` (Cloudflare Containers)
-2. Merge **kalke-auth** branch → `main` (EC2 self-hosted deploy)
-3. Merge **kalke** branch → `main` (Workers deploy)
-
-## One-time ops checklist
-
-- [ ] Confirm Cloudflare custom domain `ebank.kalke.dev` (proxied)
-- [ ] Set `M2M_USER_FORWARD_SECRET` on e-bank-api GitHub secrets / wrangler
-- [ ] Set matching `EBANK_USER_FORWARD_SECRET` (+ other `EBANK_*`) on kalke-auth
-- [ ] No EC2 resize required (bank stays on Cloudflare Containers)
-- [ ] No new DNS for bank UI (lives under `kalke.dev/playground/bank`)
-
-## DEMO reminder
-
-Virtual funds only. Welcome grant is play money. Due diligence is optional.
+Branch naming: use `feat/...` or `fix/...` only if you need a temporary branch — not `cursor/`.
