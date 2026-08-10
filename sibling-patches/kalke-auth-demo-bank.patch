@@ -1,0 +1,520 @@
+From 7505d9314c7b5edb7a2e6d2e529f16104dded13f Mon Sep 17 00:00:00 2001
+From: Henrique Kalke <henriquekalke@icloud.com>
+Date: Mon, 10 Aug 2026 17:01:27 +0000
+Subject: [PATCH] feat: proxy /v1/bank/* to e-bank-api with M2M user-forward
+
+Add EBANK_* config, cookie-session bank routes mirroring the PDE extract
+proxy, grant bank:demo to every signed-in user for the portfolio playground,
+and sync EBANK_* into prod.env on deploy.
+---
+ .github/workflows/ci.yml             |   4 +
+ deploy/remote-update.sh              |  28 +++--
+ internal/config/config.go            |  27 ++++-
+ internal/httpapi/bank.go             | 167 +++++++++++++++++++++++++++
+ internal/httpapi/bank_test.go        |  18 +++
+ internal/httpapi/permissions.go      |   9 +-
+ internal/httpapi/permissions_test.go |  25 +++-
+ internal/httpapi/server.go           |  39 +++++--
+ local.env.example                    |   6 +
+ prod.env.example                     |   6 +
+ 10 files changed, 294 insertions(+), 35 deletions(-)
+ create mode 100644 internal/httpapi/bank.go
+ create mode 100644 internal/httpapi/bank_test.go
+
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index b8f9cbd..780f674 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -105,6 +105,10 @@ jobs:
+           PDE_M2M_CLIENT_ID: ${{ secrets.PDE_M2M_CLIENT_ID }}
+           PDE_M2M_CLIENT_SECRET: ${{ secrets.PDE_M2M_CLIENT_SECRET }}
+           PDE_USER_FORWARD_SECRET: ${{ secrets.PDE_USER_FORWARD_SECRET }}
++          EBANK_BASE_URL: ${{ secrets.EBANK_BASE_URL }}
++          EBANK_M2M_CLIENT_ID: ${{ secrets.EBANK_M2M_CLIENT_ID }}
++          EBANK_M2M_CLIENT_SECRET: ${{ secrets.EBANK_M2M_CLIENT_SECRET }}
++          EBANK_USER_FORWARD_SECRET: ${{ secrets.EBANK_USER_FORWARD_SECRET }}
+         run: |
+           set -euo pipefail
+           chmod +x "${REPO_DIR}/deploy/remote-update.sh"
+diff --git a/deploy/remote-update.sh b/deploy/remote-update.sh
+index 350bb1b..5b151a3 100755
+--- a/deploy/remote-update.sh
++++ b/deploy/remote-update.sh
+@@ -32,8 +32,8 @@ git clean -fd
+ # Drop token from remote URL so it is not stored on disk.
+ git remote set-url origin "https://github.com/kalke/kalke-auth.git"
+ 
+-# Upsert PDE proxy settings from CI secrets (required for cookie → PDE extract).
+-echo "==> Syncing PDE_* into prod.env"
++# Upsert PDE + e-bank proxy settings from CI secrets.
++echo "==> Syncing PDE_* and EBANK_* into prod.env"
+ umask 077
+ python3 - <<'PY'
+ import os
+@@ -52,23 +52,29 @@ for key in (
+     "PDE_M2M_CLIENT_ID",
+     "PDE_M2M_CLIENT_SECRET",
+     "PDE_USER_FORWARD_SECRET",
++    "EBANK_BASE_URL",
++    "EBANK_M2M_CLIENT_ID",
++    "EBANK_M2M_CLIENT_SECRET",
++    "EBANK_USER_FORWARD_SECRET",
+ ):
+     val = os.environ.get(key, "").strip()
+     if val:
+         updates[key] = val
+ 
+ # Defaults when enabling the proxy for the first time.
+-if "PDE_BASE_URL" not in updates and not any(
+-    line.startswith("PDE_BASE_URL=") for line in path.read_text().splitlines()
+-):
+-    updates["PDE_BASE_URL"] = "https://pde.kalke.dev"
+-if "PDE_M2M_CLIENT_ID" not in updates and not any(
+-    line.startswith("PDE_M2M_CLIENT_ID=") for line in path.read_text().splitlines()
+-):
+-    updates["PDE_M2M_CLIENT_ID"] = "pde-m2m"
++defaults = {
++    "PDE_BASE_URL": "https://pde.kalke.dev",
++    "PDE_M2M_CLIENT_ID": "pde-m2m",
++    "EBANK_BASE_URL": "https://ebank.kalke.dev",
++    "EBANK_M2M_CLIENT_ID": "ebank-m2m",
++}
++existing = path.read_text().splitlines()
++for key, default in defaults.items():
++    if key not in updates and not any(line.startswith(f"{key}=") for line in existing):
++        updates[key] = default
+ 
+ if not updates:
+-    print("no PDE_* secrets provided; leaving prod.env unchanged")
++    print("no PDE_*/EBANK_* secrets provided; leaving prod.env unchanged")
+ else:
+     lines = path.read_text().splitlines(keepends=True)
+     out = []
+diff --git a/internal/config/config.go b/internal/config/config.go
+index b11b24d..aa8cf0e 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -46,6 +46,11 @@ type Config struct {
+ 	PDEM2MClientSecret  string
+ 	// PDEUserForwardSecret must match PDE M2M_USER_FORWARD_SECRET.
+ 	PDEUserForwardSecret string
++	EbankBaseURL         string // empty disables /v1/bank/* proxy
++	EbankM2MClientID     string
++	EbankM2MClientSecret string
++	// EbankUserForwardSecret must match e-bank-api M2M_USER_FORWARD_SECRET.
++	EbankUserForwardSecret string
+ }
+ 
+ func Load() (Config, error) {
+@@ -118,6 +123,16 @@ func Load() (Config, error) {
+ 		return Config{}, fmt.Errorf("PDE_USER_FORWARD_SECRET is required when PDE_BASE_URL is set")
+ 	}
+ 
++	ebankBase := strings.TrimSuffix(strings.TrimSpace(os.Getenv("EBANK_BASE_URL")), "/")
++	ebankM2MSecret := strings.TrimSpace(os.Getenv("EBANK_M2M_CLIENT_SECRET"))
++	ebankForwardSecret := strings.TrimSpace(os.Getenv("EBANK_USER_FORWARD_SECRET"))
++	if ebankBase != "" && ebankM2MSecret == "" {
++		return Config{}, fmt.Errorf("EBANK_M2M_CLIENT_SECRET is required when EBANK_BASE_URL is set")
++	}
++	if ebankBase != "" && ebankForwardSecret == "" {
++		return Config{}, fmt.Errorf("EBANK_USER_FORWARD_SECRET is required when EBANK_BASE_URL is set")
++	}
++
+ 	return Config{
+ 		HTTPAddr:             getenv("HTTP_ADDR", ":8080"),
+ 		DatabaseURL:          dbURL,
+@@ -151,10 +166,14 @@ func Load() (Config, error) {
+ 		SignupRatePerHour:    signupRateHour,
+ 		OAuthRedirectURI:     getenv("OAUTH_REDIRECT_URI", "https://auth.kalke.dev/v1/auth/callback"),
+ 		OAuthSuccessURL:      getenv("OAUTH_SUCCESS_URL", "https://kalke.dev/playground"),
+-		PDEBaseURL:           pdeBase,
+-		PDEM2MClientID:       getenv("PDE_M2M_CLIENT_ID", "pde-m2m"),
+-		PDEM2MClientSecret:   pdeM2MSecret,
+-		PDEUserForwardSecret: pdeForwardSecret,
++		PDEBaseURL:             pdeBase,
++		PDEM2MClientID:         getenv("PDE_M2M_CLIENT_ID", "pde-m2m"),
++		PDEM2MClientSecret:     pdeM2MSecret,
++		PDEUserForwardSecret:   pdeForwardSecret,
++		EbankBaseURL:           ebankBase,
++		EbankM2MClientID:       getenv("EBANK_M2M_CLIENT_ID", "ebank-m2m"),
++		EbankM2MClientSecret:   ebankM2MSecret,
++		EbankUserForwardSecret: ebankForwardSecret,
+ 	}, nil
+ }
+ 
+diff --git a/internal/httpapi/bank.go b/internal/httpapi/bank.go
+new file mode 100644
+index 0000000..fb805b3
+--- /dev/null
++++ b/internal/httpapi/bank.go
+@@ -0,0 +1,167 @@
++package httpapi
++
++import (
++	"context"
++	"io"
++	"net/http"
++	"strings"
++	"time"
++)
++
++func (s *Server) proxyBankBootstrap(w http.ResponseWriter, r *http.Request) {
++	s.proxyEbank(w, r, "/v1/demo/bootstrap")
++}
++
++func (s *Server) proxyBankMeta(w http.ResponseWriter, r *http.Request) {
++	s.proxyEbank(w, r, "/v1/demo/meta")
++}
++
++func (s *Server) proxyBankAccount(w http.ResponseWriter, r *http.Request) {
++	s.proxyEbank(w, r, "/v1/me/account")
++}
++
++func (s *Server) proxyBankTransactions(w http.ResponseWriter, r *http.Request) {
++	s.proxyEbank(w, r, "/v1/me/transactions")
++}
++
++func (s *Server) proxyBankTransfer(w http.ResponseWriter, r *http.Request) {
++	s.proxyEbank(w, r, "/v1/me/transfer")
++}
++
++func (s *Server) proxyBankWithdraw(w http.ResponseWriter, r *http.Request) {
++	s.proxyEbank(w, r, "/v1/me/withdraw")
++}
++
++func (s *Server) proxyBankOnboarding(w http.ResponseWriter, r *http.Request) {
++	s.proxyEbank(w, r, "/v1/onboarding")
++}
++
++func (s *Server) proxyBankOnboardingStart(w http.ResponseWriter, r *http.Request) {
++	s.proxyEbank(w, r, "/v1/onboarding/start")
++}
++
++func (s *Server) proxyBankOnboardingConsent(w http.ResponseWriter, r *http.Request) {
++	s.proxyEbank(w, r, "/v1/onboarding/consent")
++}
++
++func (s *Server) proxyBankOnboardingSkip(w http.ResponseWriter, r *http.Request) {
++	s.proxyEbank(w, r, "/v1/onboarding/skip")
++}
++
++func (s *Server) proxyBankOnboardingDocuments(w http.ResponseWriter, r *http.Request) {
++	s.proxyEbank(w, r, "/v1/onboarding/documents")
++}
++
++func (s *Server) proxyBankOnboardingComplete(w http.ResponseWriter, r *http.Request) {
++	s.proxyEbank(w, r, "/v1/onboarding/complete")
++}
++
++func (s *Server) proxyEbank(w http.ResponseWriter, r *http.Request, upstreamPath string) {
++	if s.cfg.EbankBaseURL == "" {
++		writeErr(w, http.StatusServiceUnavailable, "bank proxy not configured")
++		return
++	}
++	p, err := s.principalFromRequest(r)
++	if err != nil {
++		writeErr(w, http.StatusUnauthorized, "unauthorized")
++		return
++	}
++	perms := s.effectivePermissions(p.UserEmail, p.Permissions)
++	if !hasBankPermission(perms) {
++		writeErr(w, http.StatusForbidden, "forbidden")
++		return
++	}
++
++	bearer, err := s.cachedEbankM2MToken(r.Context())
++	if err != nil {
++		s.log.Error("ebank m2m token", "err", err, "email", p.UserEmail)
++		writeErr(w, http.StatusBadGateway, "upstream auth failed")
++		return
++	}
++
++	upstream := s.cfg.EbankBaseURL + upstreamPath
++	if q := r.URL.RawQuery; q != "" {
++		upstream += "?" + q
++	}
++	var body io.Reader
++	if r.Body != nil && r.Method != http.MethodGet && r.Method != http.MethodHead {
++		body = r.Body
++	}
++	// EbankBaseURL is server config; path is a fixed allowlist from route handlers.
++	req, err := http.NewRequestWithContext(r.Context(), r.Method, upstream, body) // #nosec G704
++	if err != nil {
++		writeErr(w, http.StatusInternalServerError, "proxy error")
++		return
++	}
++	if ct := r.Header.Get("Content-Type"); ct != "" {
++		req.Header.Set("Content-Type", ct)
++	}
++	req.Header.Set("Authorization", "Bearer "+bearer)
++	req.ContentLength = r.ContentLength
++	req.Header.Set("X-Kalke-User-Email", p.UserEmail)
++	req.Header.Set("X-Kalke-User-Sub", p.UserSub)
++	if ip := clientIP(r); ip != "" {
++		req.Header.Set("X-Kalke-Client-IP", ip)
++	}
++	if ua := strings.TrimSpace(r.UserAgent()); ua != "" {
++		req.Header.Set("X-Kalke-User-Agent", ua)
++	}
++	if s.cfg.EbankUserForwardSecret != "" {
++		req.Header.Set("X-Kalke-Forward-Secret", s.cfg.EbankUserForwardSecret)
++	}
++
++	resp, err := s.ebankHTTP.Do(req) // #nosec G704
++	if err != nil {
++		s.log.Error("ebank proxy", "err", err, "email", p.UserEmail, "path", upstreamPath)
++		writeErr(w, http.StatusBadGateway, "upstream unavailable")
++		return
++	}
++	defer func() { _ = resp.Body.Close() }()
++
++	for _, h := range []string{
++		"Content-Type",
++		"Cache-Control",
++		"Retry-After",
++		"X-RateLimit-Limit",
++		"X-RateLimit-Remaining",
++		"X-Request-ID",
++	} {
++		if v := resp.Header.Get(h); v != "" {
++			w.Header().Set(h, v)
++		}
++	}
++	w.WriteHeader(resp.StatusCode)
++	_, _ = io.Copy(w, io.LimitReader(resp.Body, 8<<20))
++}
++
++func (s *Server) cachedEbankM2MToken(ctx context.Context) (string, error) {
++	s.ebankM2M.mu.Lock()
++	defer s.ebankM2M.mu.Unlock()
++	if s.ebankM2M.token != "" && time.Now().Before(s.ebankM2M.expiry) {
++		return s.ebankM2M.token, nil
++	}
++	token, ttl, err := s.kc.ClientCredentialsToken(
++		ctx,
++		s.cfg.EbankM2MClientID,
++		s.cfg.EbankM2MClientSecret,
++	)
++	if err != nil {
++		return "", err
++	}
++	skew := 30 * time.Second
++	if ttl > 2*skew {
++		ttl -= skew
++	}
++	s.ebankM2M.token = token
++	s.ebankM2M.expiry = time.Now().Add(ttl)
++	return token, nil
++}
++
++func hasBankPermission(perms []string) bool {
++	for _, p := range perms {
++		if p == "bank:write" || p == "bank:demo" || p == "admin" {
++			return true
++		}
++	}
++	return false
++}
+diff --git a/internal/httpapi/bank_test.go b/internal/httpapi/bank_test.go
+new file mode 100644
+index 0000000..49e9244
+--- /dev/null
++++ b/internal/httpapi/bank_test.go
+@@ -0,0 +1,18 @@
++package httpapi
++
++import "testing"
++
++func TestHasBankPermission(t *testing.T) {
++	if !hasBankPermission([]string{"bank:demo"}) {
++		t.Fatal("bank:demo should allow")
++	}
++	if !hasBankPermission([]string{"bank:write"}) {
++		t.Fatal("bank:write should allow")
++	}
++	if !hasBankPermission([]string{"admin"}) {
++		t.Fatal("admin should allow")
++	}
++	if hasBankPermission([]string{"extract:write"}) {
++		t.Fatal("extract:write alone should deny")
++	}
++}
+diff --git a/internal/httpapi/permissions.go b/internal/httpapi/permissions.go
+index de40a57..6bdffaa 100644
+--- a/internal/httpapi/permissions.go
++++ b/internal/httpapi/permissions.go
+@@ -32,12 +32,10 @@ func (s *Server) isAdminEmail(email string) bool {
+ 
+ // effectivePermissions drops privileged roles unless the email is allowlisted,
+ // and strips Keycloak built-in roles from the permissions claim.
++// Every signed-in principal also receives bank:demo for the portfolio playground.
+ func (s *Server) effectivePermissions(email string, perms []string) []string {
+-	if len(perms) == 0 {
+-		return nil
+-	}
+ 	allowPriv := s.isAdminEmail(email)
+-	out := make([]string, 0, len(perms))
++	out := make([]string, 0, len(perms)+1)
+ 	seen := map[string]struct{}{}
+ 	for _, p := range perms {
+ 		p = strings.TrimSpace(p)
+@@ -56,5 +54,8 @@ func (s *Server) effectivePermissions(email string, perms []string) []string {
+ 		seen[p] = struct{}{}
+ 		out = append(out, p)
+ 	}
++	if _, ok := seen["bank:demo"]; !ok {
++		out = append(out, "bank:demo")
++	}
+ 	return out
+ }
+diff --git a/internal/httpapi/permissions_test.go b/internal/httpapi/permissions_test.go
+index 7dbec46..5d24c65 100644
+--- a/internal/httpapi/permissions_test.go
++++ b/internal/httpapi/permissions_test.go
+@@ -6,26 +6,43 @@ import (
+ 	"github.com/kalke/kalke-auth/internal/config"
+ )
+ 
++func contains(perms []string, want string) bool {
++	for _, p := range perms {
++		if p == want {
++			return true
++		}
++	}
++	return false
++}
++
+ func TestEffectivePermissions(t *testing.T) {
+ 	s := &Server{cfg: config.Config{AdminEmails: []string{"henriquekalke@icloud.com"}}}
+ 
+ 	got := s.effectivePermissions("henriquekalke@icloud.com", []string{"admin", "extract:write", "bank:write"})
+-	if len(got) != 3 {
+-		t.Fatalf("admin email should keep privileged roles: %v", got)
++	if !contains(got, "admin") || !contains(got, "extract:write") || !contains(got, "bank:write") || !contains(got, "bank:demo") {
++		t.Fatalf("admin email should keep privileged roles + bank:demo: %v", got)
+ 	}
+ 
+ 	got = s.effectivePermissions("other@example.com", []string{"admin", "extract:write", "bank:write"})
+-	if len(got) != 1 || got[0] != "extract:write" {
++	if contains(got, "admin") || contains(got, "bank:write") {
+ 		t.Fatalf("non-admin must lose privileged roles: %v", got)
+ 	}
++	if !contains(got, "extract:write") || !contains(got, "bank:demo") {
++		t.Fatalf("non-admin should keep extract + bank:demo: %v", got)
++	}
+ 
+ 	got = s.effectivePermissions("other@example.com", []string{
+ 		"offline_access", "default-roles-kalke", "uma_authorization", "extract:write",
+ 	})
+-	if len(got) != 1 || got[0] != "extract:write" {
++	if !contains(got, "extract:write") || !contains(got, "bank:demo") || len(got) != 2 {
+ 		t.Fatalf("keycloak noise roles must be stripped: %v", got)
+ 	}
+ 
++	got = s.effectivePermissions("other@example.com", nil)
++	if len(got) != 1 || got[0] != "bank:demo" {
++		t.Fatalf("empty perms should still grant bank:demo: %v", got)
++	}
++
+ 	if s.isAdminEmail("") || s.isAdminEmail("other@example.com") {
+ 		t.Fatal("unexpected admin email match")
+ 	}
+diff --git a/internal/httpapi/server.go b/internal/httpapi/server.go
+index e9334e2..5459b08 100644
+--- a/internal/httpapi/server.go
++++ b/internal/httpapi/server.go
+@@ -40,7 +40,9 @@ type Server struct {
+ 	mailer   mail.Mailer
+ 	proxy    *httputil.ReverseProxy
+ 	pdeHTTP  *http.Client
++	ebankHTTP *http.Client
+ 	m2m      m2mCache
++	ebankM2M m2mCache
+ 	log      *slog.Logger
+ }
+ 
+@@ -62,18 +64,19 @@ func New(cfg config.Config, st *store.Store, kc *keycloak.Client, admin *keycloa
+ 		mailer = mail.LogMailer{Log: log}
+ 	}
+ 	return &Server{
+-		cfg:      cfg,
+-		store:    st,
+-		kc:       kc,
+-		admin:    admin,
+-		rdb:      rdb,
+-		pending:  signup.NewStore(rdb, cfg.TokenPepper),
+-		loginOTP: otp.NewStore(rdb, cfg.TokenPepper, "login:otp:"),
+-		resetOTP: otp.NewStore(rdb, cfg.TokenPepper, "reset:otp:"),
+-		mailer:   mailer,
+-		proxy:    proxy,
+-		pdeHTTP:  &http.Client{Timeout: 180 * time.Second},
+-		log:      log,
++		cfg:       cfg,
++		store:     st,
++		kc:        kc,
++		admin:     admin,
++		rdb:       rdb,
++		pending:   signup.NewStore(rdb, cfg.TokenPepper),
++		loginOTP:  otp.NewStore(rdb, cfg.TokenPepper, "login:otp:"),
++		resetOTP:  otp.NewStore(rdb, cfg.TokenPepper, "reset:otp:"),
++		mailer:    mailer,
++		proxy:     proxy,
++		pdeHTTP:   &http.Client{Timeout: 180 * time.Second},
++		ebankHTTP: &http.Client{Timeout: 60 * time.Second},
++		log:       log,
+ 	}
+ }
+ 
+@@ -103,6 +106,18 @@ func (s *Server) Handler() http.Handler {
+ 	mux.HandleFunc("POST /v1/extract", s.proxyExtract)
+ 	mux.HandleFunc("GET /v1/extractions", s.proxyExtractions)
+ 	mux.HandleFunc("GET /v1/extractions/{id}", s.proxyExtractions)
++	mux.HandleFunc("GET /v1/bank/meta", s.proxyBankMeta)
++	mux.HandleFunc("POST /v1/bank/bootstrap", s.proxyBankBootstrap)
++	mux.HandleFunc("GET /v1/bank/account", s.proxyBankAccount)
++	mux.HandleFunc("GET /v1/bank/transactions", s.proxyBankTransactions)
++	mux.HandleFunc("POST /v1/bank/transfer", s.proxyBankTransfer)
++	mux.HandleFunc("POST /v1/bank/withdraw", s.proxyBankWithdraw)
++	mux.HandleFunc("GET /v1/bank/onboarding", s.proxyBankOnboarding)
++	mux.HandleFunc("POST /v1/bank/onboarding/start", s.proxyBankOnboardingStart)
++	mux.HandleFunc("POST /v1/bank/onboarding/consent", s.proxyBankOnboardingConsent)
++	mux.HandleFunc("POST /v1/bank/onboarding/skip", s.proxyBankOnboardingSkip)
++	mux.HandleFunc("POST /v1/bank/onboarding/documents", s.proxyBankOnboardingDocuments)
++	mux.HandleFunc("POST /v1/bank/onboarding/complete", s.proxyBankOnboardingComplete)
+ 	mux.HandleFunc("/", s.oidcProxy)
+ 	return s.cors(mux)
+ }
+diff --git a/local.env.example b/local.env.example
+index df78427..3d39689 100644
+--- a/local.env.example
++++ b/local.env.example
+@@ -37,3 +37,9 @@ PDE_BASE_URL=http://api:8080
+ PDE_M2M_CLIENT_ID=pde-m2m
+ PDE_M2M_CLIENT_SECRET=pde-m2m-dev-secret
+ PDE_USER_FORWARD_SECRET=local-dev-m2m-forward-secret
++
++# Demo bank proxy (browser → BFF cookie → e-bank-api with M2M JWT).
++EBANK_BASE_URL=http://host.docker.internal:8000
++EBANK_M2M_CLIENT_ID=ebank-m2m
++EBANK_M2M_CLIENT_SECRET=ebank-m2m-dev-secret
++EBANK_USER_FORWARD_SECRET=local-dev-m2m-forward-secret
+diff --git a/prod.env.example b/prod.env.example
+index 33b1c0c..6bca81c 100644
+--- a/prod.env.example
++++ b/prod.env.example
+@@ -43,6 +43,12 @@ PDE_M2M_CLIENT_ID='pde-m2m'
+ PDE_M2M_CLIENT_SECRET=''
+ # Must match PDE M2M_USER_FORWARD_SECRET.
+ PDE_USER_FORWARD_SECRET=''
++# Demo bank playground — BFF proxies /v1/bank/* to e-bank-api.
++EBANK_BASE_URL='https://ebank.kalke.dev'
++EBANK_M2M_CLIENT_ID='ebank-m2m'
++EBANK_M2M_CLIENT_SECRET=''
++# Must match e-bank-api M2M_USER_FORWARD_SECRET.
++EBANK_USER_FORWARD_SECRET=''
+ # AWS Free Tier EC2: use docker-compose.aws.yml (Caddy terminates TLS for auth.kalke.dev).
+ # Cloudflare Tunnel token (Zero Trust → Networks → Tunnels). Enables keycloak.kalke.dev admin UI.
+ CLOUDFLARE_TUNNEL_TOKEN=''
+-- 
+2.43.0
+
