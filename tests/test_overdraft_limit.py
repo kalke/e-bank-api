@@ -232,7 +232,10 @@ class TestOverdraftLimitApi:
             "destination": {"id": "300", "balance": 1200},
         }
 
-    def test_withdraw_one_over_overdraft_limit_returns_400(self, client: TestClient) -> None:
+    def test_withdraw_one_over_overdraft_limit_returns_400(
+        self,
+        client: TestClient,
+    ) -> None:
         client.post(
             "/event",
             json={"type": "deposit", "destination": "100", "amount": 200},
@@ -246,7 +249,10 @@ class TestOverdraftLimitApi:
         assert response.json() == {"message": "Account 100 has insufficient funds"}
         assert client.get("/balance", params={"account_id": "100"}).text == "200"
 
-    def test_transfer_one_over_overdraft_limit_returns_400(self, client: TestClient) -> None:
+    def test_transfer_one_over_overdraft_limit_returns_400(
+        self,
+        client: TestClient,
+    ) -> None:
         client.post(
             "/event",
             json={"type": "deposit", "destination": "100", "amount": 200},
@@ -266,7 +272,10 @@ class TestOverdraftLimitApi:
         assert client.get("/balance", params={"account_id": "100"}).text == "200"
         assert client.get("/balance", params={"account_id": "300"}).status_code == 404
 
-    def test_withdraw_from_account_at_limit_returns_400(self, client: TestClient) -> None:
+    def test_withdraw_from_account_at_limit_returns_400(
+        self,
+        client: TestClient,
+    ) -> None:
         client.post(
             "/event",
             json={"type": "deposit", "destination": "100", "amount": 100},
@@ -286,7 +295,10 @@ class TestOverdraftLimitApi:
         assert response.status_code == 400
         assert response.json() == {"message": "Account 100 has insufficient funds"}
 
-    def test_transfer_from_negative_balance_up_to_limit(self, client: TestClient) -> None:
+    def test_transfer_from_negative_balance_up_to_limit(
+        self,
+        client: TestClient,
+    ) -> None:
         client.post(
             "/event",
             json={"type": "deposit", "destination": "100", "amount": 100},
