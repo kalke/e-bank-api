@@ -1,17 +1,14 @@
 from __future__ import annotations
 
-import functools
 import hashlib
 import json
-from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import Any, ParamSpec, TypeVar
+from typing import Any
 
-import structlog
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
@@ -19,9 +16,6 @@ from app.core.exceptions import DuplicateRequestException, IdempotencyStorageExc
 from app.core.logger import get_logger, sanitize_sensitive_fields
 
 logger = get_logger(__name__)
-
-P = ParamSpec("P")
-T = TypeVar("T")
 
 _idempotency_service_var: ContextVar[IdempotencyService | None] = ContextVar(
     "idempotency_service",
@@ -334,97 +328,3 @@ def get_idempotency_service() -> IdempotencyService:
     if service is None:
         raise IdempotencyStorageException("Idempotency service is not configured")
     return service
-
-
-def idempotent(
-    ttl: int = 86400,
-    *,
-    route: str,
-    user_id_param: str = "account_id",
-) -> Callable[[Callable[P, Awaitable[T]]], Callable[P, Awaitable[T]]]:
-    def decorator(
-        func: Callable[P, Awaitable[T]],
-    ) -> Callable[P, Awaitable[T]]:
-        @functools.wraps(func)
-        async def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
-            service = get_idempotency_service()
-            bound = dict(zip(func.__code__.co_varnames[: len(args)], args))
-            bound.update(kwargs)
-            user_id = str(bound.get(user_id_param, "anonymous"))
-            payload = {
-                key: value
-                for key, value in bound.items()
-                if key not in {"self", "cls"} and not callable(value)
-            }
-            payload = normalize_financial_payload(route, payload)
-            key = await service.generate_key(route, "POST", user_id, payload)
-            structlog.contextvars.bind_contextvars(idempotency_key=key)
-
-            record = await service.check(key)
-            if record and record.status == IdempotencyStatus.COMPLETED:
-                logger.info(
-                    "idempotency.hit",
-                    idempotency_key=key,
-                    route=route,
-                    user_id=user_id,
-                    attempt_count=record.attempt_count,
-                )
-                if isinstance(record.response_body, dict):
-                    return record.response_body  # type: ignore[return-value]
-                raise IdempotencyStorageException(
-                    "Cached decorator response is invalid"
-                )
-
-            if record and record.status == IdempotencyStatus.PROCESSING:
-                logger.warning(
-                    "idempotency.processing_conflict",
-                    idempotency_key=key,
-                    route=route,
-                    user_id=user_id,
-                    attempt_count=record.attempt_count,
-                )
-                raise DuplicateRequestException(key)
-
-            if record and record.status == IdempotencyStatus.FAILED:
-                await service.set_failed(key)
-                logger.warning(
-                    "idempotency.failed_cleared",
-                    idempotency_key=key,
-                    route=route,
-                    user_id=user_id,
-                    attempt_count=record.attempt_count,
-                )
-
-            request_hash = compute_request_hash(route, "POST", user_id, payload)
-            await service.set_processing(key, request_hash)
-            logger.info(
-                "idempotency.miss",
-                idempotency_key=key,
-                route=route,
-                user_id=user_id,
-                attempt_count=1,
-            )
-
-            try:
-                result = await func(*args, **kwargs)
-            except Exception:
-                await service.set_failed(key)
-                raise
-
-            response_body: dict[str, Any]
-            if isinstance(result, dict):
-                response_body = result
-            else:
-                response_body = {"result": result}
-
-            completion_service = IdempotencyService(
-                service.redis_client,
-                ttl_processing=service._ttl_processing,
-                ttl_completed=ttl,
-            )
-            await completion_service.set_completed(key, 200, response_body)
-            return result
-
-        return wrapper
-
-    return decorator

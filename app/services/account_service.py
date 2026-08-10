@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from decimal import Decimal
 
-from app.core.config import get_settings
 from app.core.logger import get_logger
 from app.errors import AccountNotFound, InsufficientFunds, InvalidAmount
 from app.repositories.account_repository import AccountRepository
@@ -174,8 +173,3 @@ class AccountService:
 
 def _to_int_balance(balance: Decimal) -> int:
     return int(balance)
-
-
-# Re-export path compatibility: app.services.AccountService
-def legacy_overdraft_enabled() -> bool:
-    return get_settings().legacy_challenge_routes

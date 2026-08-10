@@ -49,9 +49,3 @@ class TransferLimitExceeded(DomainError):
 
 class OnboardingError(DomainError):
     status_code = 400
-
-
-class DemoAlreadyBootstrapped(DomainError):
-    """Informational — bootstrap is idempotent; not raised in happy path."""
-
-    status_code = 200

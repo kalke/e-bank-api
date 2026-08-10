@@ -23,24 +23,6 @@ class EventIn(BaseModel):
         return self
 
 
-class AccountOut(BaseModel):
-    id: str
-    balance: int
-
-
-class DepositResponse(BaseModel):
-    destination: AccountOut
-
-
-class WithdrawResponse(BaseModel):
-    origin: AccountOut
-
-
-class TransferResponse(BaseModel):
-    origin: AccountOut
-    destination: AccountOut
-
-
 class DemoMetaOut(BaseModel):
     demo: bool = True
     welcome_amount: str
