@@ -19,6 +19,7 @@ PIP := $(VENV)/bin/pip
 UVICORN := $(VENV)/bin/uvicorn
 PYTEST := $(VENV)/bin/pytest
 RUFF := $(VENV)/bin/ruff
+ALEMBIC := $(VENV)/bin/alembic
 
 help:
 	@echo "Usage: make <target>"
@@ -74,14 +75,14 @@ lint-ci: $(RUFF)
 
 ci: lint-ci test
 
-migrate:
-	alembic upgrade head
+migrate: $(ALEMBIC)
+	$(ALEMBIC) upgrade head
 
-migrate-down:
-	alembic downgrade -1
+migrate-down: $(ALEMBIC)
+	$(ALEMBIC) downgrade -1
 
-migration:
-	alembic revision --autogenerate -m "$(name)"
+migration: $(ALEMBIC)
+	$(ALEMBIC) revision --autogenerate -m "$(name)"
 
 db-shell:
 	docker compose exec postgres psql -U ebank -d ebank
