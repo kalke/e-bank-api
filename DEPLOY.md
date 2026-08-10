@@ -1,6 +1,9 @@
 # Deploy e-bank-api (ebank.kalke.dev)
 
-**DEMO ONLY** — virtual portfolio bank (Cloudflare Containers + Neon Postgres + Upstash Redis).
+**DEMO ONLY** — virtual portfolio bank on the **same AWS EC2** as `kalke-auth`
+and PDE (Neon Postgres + Upstash Redis + Caddy).
+
+Push to `main` runs **Lint → Tests → Docker build/push (GHCR) → Deploy**.
 
 ## 1. Neon (free)
 
@@ -32,40 +35,37 @@ Deploy [kalke-auth](https://github.com/kalke/kalke-auth) first. Share
 
 | Secret | Value |
 |---|---|
-| `CLOUDFLARE_API_TOKEN` | Cloudflare API token |
-| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account id |
 | `DATABASE_URL` | `postgresql+asyncpg://…` |
 | `REDIS_URL` | `rediss://…` |
 | `OIDC_ISSUER` | `https://auth.kalke.dev/realms/kalke` |
 | `OIDC_AUDIENCE` | `e-bank-api` |
 | `M2M_USER_FORWARD_SECRET` | shared with kalke-auth |
+| `CLOUDFLARE_API_TOKEN` | DNS upsert only (`dns-ebank` workflow) |
 
 ## 5. DNS
 
-`ebank.kalke.dev` is declared as a Wrangler custom domain. Confirm it is attached
-on the Worker in the Cloudflare dashboard (proxied / orange cloud). No separate
-UI hostname is required — the playground lives on `kalke.dev`.
+Grey-cloud A record (Caddy terminates TLS on EC2):
 
-## 6. Deploy
-
-Push/merge to `main` runs CI then deploy. Manual:
-
-```bash
-npm ci
-npx wrangler secret put DATABASE_URL
-npx wrangler secret put REDIS_URL
-npx wrangler secret put OIDC_ISSUER
-npx wrangler secret put OIDC_AUDIENCE
-npx wrangler secret put M2M_USER_FORWARD_SECRET
-npm run deploy
+```text
+A  ebank.kalke.dev  →  54.234.95.66  proxied:false
 ```
+
+Run the `dns-ebank` workflow, or upsert manually. Auth Caddy must proxy
+`ebank.kalke.dev` → `ebank-api:8000` (see kalke-auth `Caddyfile.aws`).
+
+## 6. EC2
+
+Same host as auth/PDE. Deploy job uses the `pde-ec2` self-hosted runner label,
+checks out `/home/ubuntu/e-bank-api`, syncs `prod.env`, pulls GHCR, `make aws-up`.
+
+Container: `ebank-api`, network `kalke-auth_default`, `mem_limit: 256m`, 1 uvicorn worker.
 
 Migrations run on container start via `docker-entrypoint.sh` (`alembic upgrade head`).
 
-## 7. EC2 note
+## 7. Capacity
 
-Auth BFF and PDE stay on the existing EC2 micro. This API stays on Cloudflare
-Containers — no EC2 resize required for the demo bank.
+Auth + PDE + e-bank soft-limit ~1.5–1.7 GB. Prefer **t3.small (2 GB)** + 2G swap.
+On a micro, watch `free -h` / OOM and scale if auth or PDE becomes unstable.
 
 ## 8. Branch protection
 
