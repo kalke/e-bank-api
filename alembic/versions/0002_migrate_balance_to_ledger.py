@@ -13,6 +13,7 @@ schema from the current 0001 and skip this migration entirely.
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "0002"

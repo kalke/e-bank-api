@@ -9,6 +9,7 @@ Create Date: 2026-08-10 22:50:00.000000
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "0005"
@@ -122,7 +123,9 @@ def upgrade() -> None:
         for (old_id,) in chk_rows:
             new_id = str(uuid.uuid4())
             connection.execute(
-                sa.text("UPDATE transactions SET account_id = :n WHERE account_id = :o"),
+                sa.text(
+                    "UPDATE transactions SET account_id = :n WHERE account_id = :o"
+                ),
                 {"n": new_id, "o": old_id},
             )
             connection.execute(
