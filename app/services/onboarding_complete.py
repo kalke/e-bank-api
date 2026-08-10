@@ -207,7 +207,7 @@ class OnboardingCompletionService:
                 session.skipped_at = now
             else:
                 session.completed_at = now
-        # Always bind completion to the Keycloak user (subject), never to browser session.
+        # Always bind completion to the Keycloak user subject, not the browser session.
         await self._users.set_onboarding_status(subject, onboarding_status)
         await self._session.refresh(account)
 
