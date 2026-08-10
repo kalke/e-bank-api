@@ -69,7 +69,7 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-dev.txt
       - run: make setup
-      - run: alembic upgrade head
+      - run: make migrate
       - run: make test
 
   docker:
