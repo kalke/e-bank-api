@@ -9,3 +9,4 @@ __pycache__/
 node_modules/
 .wrangler/
 dist/
+.pytest-e-bank.db

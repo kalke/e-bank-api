@@ -4,16 +4,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.errors import AccountNotFound, InsufficientFunds
-from app.main import app
 from app.services import AccountService
 
 OVERDRAFT_LIMIT = AccountService.OVERDRAFT_LIMIT
 
-client = TestClient(app)
-
 
 @pytest.fixture(autouse=True)
-def reset_api_state() -> None:
+def reset_api_state(client: TestClient) -> None:
     client.post("/reset")
 
 
@@ -154,7 +151,7 @@ class TestOverdraftLimitService:
 
 
 class TestOverdraftLimitApi:
-    def test_withdraw_from_zero_balance_goes_negative(self) -> None:
+    def test_withdraw_from_zero_balance_goes_negative(self, client: TestClient) -> None:
         client.post(
             "/event",
             json={"type": "deposit", "destination": "100", "amount": 1},
@@ -171,7 +168,7 @@ class TestOverdraftLimitApi:
         assert response.status_code == 201
         assert response.json() == {"origin": {"id": "100", "balance": -50}}
 
-    def test_transfer_from_zero_balance_goes_negative(self) -> None:
+    def test_transfer_from_zero_balance_goes_negative(self, client: TestClient) -> None:
         client.post(
             "/event",
             json={"type": "deposit", "destination": "100", "amount": 10},
@@ -201,7 +198,7 @@ class TestOverdraftLimitApi:
             "destination": {"id": "300", "balance": 40},
         }
 
-    def test_withdraw_exactly_at_overdraft_limit(self) -> None:
+    def test_withdraw_exactly_at_overdraft_limit(self, client: TestClient) -> None:
         client.post(
             "/event",
             json={"type": "deposit", "destination": "100", "amount": 200},
@@ -214,7 +211,7 @@ class TestOverdraftLimitApi:
         assert response.status_code == 201
         assert response.json() == {"origin": {"id": "100", "balance": OVERDRAFT_LIMIT}}
 
-    def test_transfer_exactly_at_overdraft_limit(self) -> None:
+    def test_transfer_exactly_at_overdraft_limit(self, client: TestClient) -> None:
         client.post(
             "/event",
             json={"type": "deposit", "destination": "100", "amount": 200},
@@ -235,7 +232,7 @@ class TestOverdraftLimitApi:
             "destination": {"id": "300", "balance": 1200},
         }
 
-    def test_withdraw_one_over_overdraft_limit_returns_400(self) -> None:
+    def test_withdraw_one_over_overdraft_limit_returns_400(self, client: TestClient) -> None:
         client.post(
             "/event",
             json={"type": "deposit", "destination": "100", "amount": 200},
@@ -249,7 +246,7 @@ class TestOverdraftLimitApi:
         assert response.json() == {"message": "Account 100 has insufficient funds"}
         assert client.get("/balance", params={"account_id": "100"}).text == "200"
 
-    def test_transfer_one_over_overdraft_limit_returns_400(self) -> None:
+    def test_transfer_one_over_overdraft_limit_returns_400(self, client: TestClient) -> None:
         client.post(
             "/event",
             json={"type": "deposit", "destination": "100", "amount": 200},
@@ -269,7 +266,7 @@ class TestOverdraftLimitApi:
         assert client.get("/balance", params={"account_id": "100"}).text == "200"
         assert client.get("/balance", params={"account_id": "300"}).status_code == 404
 
-    def test_withdraw_from_account_at_limit_returns_400(self) -> None:
+    def test_withdraw_from_account_at_limit_returns_400(self, client: TestClient) -> None:
         client.post(
             "/event",
             json={"type": "deposit", "destination": "100", "amount": 100},
@@ -289,7 +286,7 @@ class TestOverdraftLimitApi:
         assert response.status_code == 400
         assert response.json() == {"message": "Account 100 has insufficient funds"}
 
-    def test_transfer_from_negative_balance_up_to_limit(self) -> None:
+    def test_transfer_from_negative_balance_up_to_limit(self, client: TestClient) -> None:
         client.post(
             "/event",
             json={"type": "deposit", "destination": "100", "amount": 100},

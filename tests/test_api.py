@@ -1,17 +1,13 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app
-
-client = TestClient(app)
-
 
 @pytest.fixture(autouse=True)
-def reset_state() -> None:
+def reset_state(client: TestClient) -> None:
     client.post("/reset")
 
 
-def test_full_flow_from_spec() -> None:
+def test_full_flow_from_spec(client: TestClient) -> None:
     response = client.get("/balance", params={"account_id": "1234"})
     assert response.status_code == 404
     assert response.json() == {"message": "Account 1234 not found"}
@@ -76,7 +72,7 @@ def test_full_flow_from_spec() -> None:
     assert response.json() == {"message": "Account 200 not found"}
 
 
-def test_insufficient_funds_withdraw() -> None:
+def test_insufficient_funds_withdraw(client: TestClient) -> None:
     client.post(
         "/event",
         json={"type": "deposit", "destination": "100", "amount": 5},
@@ -94,7 +90,7 @@ def test_insufficient_funds_withdraw() -> None:
     assert balance.text == "5"
 
 
-def test_insufficient_funds_transfer() -> None:
+def test_insufficient_funds_transfer(client: TestClient) -> None:
     client.post(
         "/event",
         json={"type": "deposit", "destination": "100", "amount": 5},
@@ -119,7 +115,7 @@ def test_insufficient_funds_transfer() -> None:
     assert dest.status_code == 404
 
 
-def test_transfer_allows_overdraft_up_to_limit() -> None:
+def test_transfer_allows_overdraft_up_to_limit(client: TestClient) -> None:
     client.post(
         "/event",
         json={"type": "deposit", "destination": "100", "amount": 50},
@@ -141,7 +137,7 @@ def test_transfer_allows_overdraft_up_to_limit() -> None:
     }
 
 
-def test_withdraw_allows_overdraft_up_to_limit() -> None:
+def test_withdraw_allows_overdraft_up_to_limit(client: TestClient) -> None:
     client.post(
         "/event",
         json={"type": "deposit", "destination": "100", "amount": 100},
@@ -155,7 +151,7 @@ def test_withdraw_allows_overdraft_up_to_limit() -> None:
     assert response.json() == {"origin": {"id": "100", "balance": -1000}}
 
 
-def test_reset_clears_state() -> None:
+def test_reset_clears_state(client: TestClient) -> None:
     client.post(
         "/event",
         json={"type": "deposit", "destination": "100", "amount": 10},
@@ -166,18 +162,18 @@ def test_reset_clears_state() -> None:
     assert response.json() == {"message": "Account 100 not found"}
 
 
-def test_reset_returns_200_ok() -> None:
+def test_reset_returns_200_ok(client: TestClient) -> None:
     response = client.post("/reset")
     assert response.status_code == 200
     assert response.text == "OK"
 
 
-def test_balance_requires_account_id() -> None:
+def test_balance_requires_account_id(client: TestClient) -> None:
     response = client.get("/balance")
     assert response.status_code == 422
 
 
-def test_deposit_missing_destination_returns_422() -> None:
+def test_deposit_missing_destination_returns_422(client: TestClient) -> None:
     response = client.post(
         "/event",
         json={"type": "deposit", "amount": 10},
@@ -185,7 +181,7 @@ def test_deposit_missing_destination_returns_422() -> None:
     assert response.status_code == 422
 
 
-def test_withdraw_missing_origin_returns_422() -> None:
+def test_withdraw_missing_origin_returns_422(client: TestClient) -> None:
     response = client.post(
         "/event",
         json={"type": "withdraw", "amount": 10},
@@ -193,7 +189,7 @@ def test_withdraw_missing_origin_returns_422() -> None:
     assert response.status_code == 422
 
 
-def test_transfer_missing_fields_returns_422() -> None:
+def test_transfer_missing_fields_returns_422(client: TestClient) -> None:
     response = client.post(
         "/event",
         json={"type": "transfer", "origin": "100", "amount": 10},
@@ -201,7 +197,7 @@ def test_transfer_missing_fields_returns_422() -> None:
     assert response.status_code == 422
 
 
-def test_event_invalid_amount_returns_422() -> None:
+def test_event_invalid_amount_returns_422(client: TestClient) -> None:
     response = client.post(
         "/event",
         json={"type": "deposit", "destination": "100", "amount": 0},
@@ -209,7 +205,7 @@ def test_event_invalid_amount_returns_422() -> None:
     assert response.status_code == 422
 
 
-def test_get_balance_after_deposit() -> None:
+def test_get_balance_after_deposit(client: TestClient) -> None:
     client.post(
         "/event",
         json={"type": "deposit", "destination": "100", "amount": 10},
@@ -219,7 +215,7 @@ def test_get_balance_after_deposit() -> None:
     assert response.text == "10"
 
 
-def test_transfer_creates_destination_account() -> None:
+def test_transfer_creates_destination_account(client: TestClient) -> None:
     client.post(
         "/event",
         json={"type": "deposit", "destination": "100", "amount": 20},

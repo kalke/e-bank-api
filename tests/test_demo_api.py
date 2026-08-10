@@ -1,11 +1,7 @@
 from fastapi.testclient import TestClient
 
-from app.main import app
 
-client = TestClient(app)
-
-
-def test_demo_meta() -> None:
+def test_demo_meta(client: TestClient) -> None:
     response = client.get("/v1/demo/meta")
     assert response.status_code == 200
     data = response.json()
@@ -15,7 +11,7 @@ def test_demo_meta() -> None:
     assert "DEMO ONLY" in data["disclaimer"]
 
 
-def test_bootstrap_credits_once() -> None:
+def test_bootstrap_credits_once(client: TestClient) -> None:
     first = client.post("/v1/demo/bootstrap")
     assert first.status_code == 200
     body = first.json()
@@ -34,7 +30,7 @@ def test_bootstrap_credits_once() -> None:
     assert account.json()["balance"] == "10000.00"
 
 
-def test_onboarding_skip_then_bank() -> None:
+def test_onboarding_skip_then_bank(client: TestClient) -> None:
     start = client.post("/v1/onboarding/start")
     assert start.status_code == 200
     assert start.json()["skippable"] is True
@@ -49,7 +45,7 @@ def test_onboarding_skip_then_bank() -> None:
     assert boot.json()["onboarding_status"] == "skipped"
 
 
-def test_onboarding_document_and_complete() -> None:
+def test_onboarding_document_and_complete(client: TestClient) -> None:
     client.post("/v1/onboarding/start")
     client.post(
         "/v1/onboarding/consent",
@@ -71,7 +67,7 @@ def test_onboarding_document_and_complete() -> None:
     assert complete.json()["onboarding_status"] == "completed"
 
 
-def test_transfer_and_transactions() -> None:
+def test_transfer_and_transactions(client: TestClient) -> None:
     a = client.post("/v1/demo/bootstrap").json()
     # Create destination via second synthetic user by direct service is hard;
     # use legacy deposit to create dest account then transfer to it.
@@ -102,7 +98,7 @@ def test_transfer_and_transactions() -> None:
     assert me.json()["balance"] == "9974.50"
 
 
-def test_transfer_limit() -> None:
+def test_transfer_limit(client: TestClient) -> None:
     client.post("/v1/demo/bootstrap")
     client.post(
         "/event",
@@ -115,14 +111,14 @@ def test_transfer_limit() -> None:
     assert response.status_code == 400
 
 
-def test_withdraw() -> None:
+def test_withdraw(client: TestClient) -> None:
     client.post("/v1/demo/bootstrap")
     response = client.post("/v1/me/withdraw", json={"amount": "100.00"})
     assert response.status_code == 200
     assert response.json()["balance"] == "9900.00"
 
 
-def test_ready() -> None:
+def test_ready(client: TestClient) -> None:
     response = client.get("/ready")
     assert response.status_code == 200
     assert response.json()["status"] == "ready"
