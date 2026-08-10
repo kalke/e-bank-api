@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import time
 from collections.abc import Awaitable, Callable
-from uuid import uuid4
 
 import structlog
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -10,13 +9,14 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from app.core.logger import get_logger
+from app.domain.ids import new_uuid
 
 RequestCallNext = Callable[[Request], Awaitable[Response]]
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestCallNext) -> Response:
-        request_id = str(uuid4())
+        request_id = new_uuid()
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(request_id=request_id)
         request.state.request_id = request_id

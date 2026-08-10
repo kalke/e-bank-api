@@ -1,10 +1,10 @@
 from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.ids import new_uuid
 from app.models.onboarding import (
     Consent,
     DemoGrant,
@@ -106,7 +106,7 @@ class OnboardingRepository:
         return result.scalar_one_or_none()
 
     async def create_session(self, subject: str) -> OnboardingSession:
-        session = OnboardingSession(id=str(uuid4()), subject=subject, status="draft")
+        session = OnboardingSession(id=new_uuid(), subject=subject, status="draft")
         self._session.add(session)
         await self._session.flush()
         return session
@@ -127,7 +127,7 @@ class OnboardingRepository:
         summary_json: dict | None = None,
     ) -> OnboardingDocument:
         doc = OnboardingDocument(
-            id=str(uuid4()),
+            id=new_uuid(),
             session_id=session_id,
             doc_type=doc_type,
             pde_extraction_id=pde_extraction_id,

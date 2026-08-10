@@ -1,6 +1,5 @@
 from datetime import datetime
 from decimal import Decimal
-from uuid import uuid4
 
 from sqlalchemy import DateTime, ForeignKey, Numeric, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
@@ -8,10 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import JSON
 
 from app.core.database import Base
-
-
-def _uuid() -> str:
-    return str(uuid4())
+from app.domain.ids import new_uuid
 
 
 class OnboardingSession(Base):
@@ -20,7 +16,7 @@ class OnboardingSession(Base):
     id: Mapped[str] = mapped_column(
         String(36),
         primary_key=True,
-        default=_uuid,
+        default=new_uuid,
     )
     subject: Mapped[str] = mapped_column(
         String(128),
@@ -56,7 +52,7 @@ class OnboardingSession(Base):
 class OnboardingDocument(Base):
     __tablename__ = "onboarding_documents"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     session_id: Mapped[str] = mapped_column(
         String(36),
         ForeignKey("onboarding_sessions.id"),

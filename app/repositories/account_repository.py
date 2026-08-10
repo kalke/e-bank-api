@@ -29,7 +29,8 @@ class AccountRecord:
 
 @dataclass(frozen=True)
 class TransactionRecord:
-    id: int
+    id: str
+    internal_id: int
     account_id: str
     amount: Decimal
     type: str
@@ -178,8 +179,19 @@ class AccountRepository:
         account_id: str,
         *,
         limit: int = 20,
-        before_id: int | None = None,
+        before_public_id: str | None = None,
     ) -> list[TransactionRecord]:
+        before_id: int | None = None
+        if before_public_id:
+            cursor_row = await self._session.execute(
+                select(Transaction.id).where(
+                    Transaction.public_id == before_public_id,
+                    Transaction.account_id == account_id,
+                ),
+            )
+            before_id = cursor_row.scalar_one_or_none()
+            if before_id is None:
+                return []
         stmt = (
             select(Transaction)
             .where(Transaction.account_id == account_id)
@@ -192,7 +204,8 @@ class AccountRepository:
         rows = result.scalars().all()
         return [
             TransactionRecord(
-                id=row.id,
+                id=row.public_id,
+                internal_id=row.id,
                 account_id=row.account_id,
                 amount=row.amount,
                 type=row.type,

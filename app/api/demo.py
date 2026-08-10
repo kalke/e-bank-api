@@ -133,7 +133,7 @@ async def my_account_detail(
 @router.get("/me/transactions")
 async def my_transactions(
     limit: int = 20,
-    cursor: int | None = None,
+    cursor: str | None = None,
     db: AsyncSession = Depends(get_db),
     principal: Principal = Depends(require_authenticated_bank_write),
 ) -> dict:

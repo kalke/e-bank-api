@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-from uuid import uuid4
 
 from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logger import get_logger
+from app.domain.ids import new_uuid
 from app.errors import DomainError, InsufficientFunds
 from app.models.account import Account
 from app.models.ledger import JournalEntry, LedgerAccount, LedgerPosting
@@ -138,7 +138,7 @@ class LedgerService:
                 raise LedgerError("posting amount must be positive")
 
         journal = JournalEntry(
-            id=str(uuid4()),
+            id=new_uuid(),
             actor_subject=actor_subject,
             request_id=request_id,
             idempotency_key=idempotency_key,

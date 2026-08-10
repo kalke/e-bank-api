@@ -26,12 +26,15 @@ def test_bootstrap_requires_onboarding(client: TestClient) -> None:
 
 
 def test_skip_opens_account_with_number(client: TestClient) -> None:
+    from uuid import UUID
+
     body = _open_account(client)
     assert body["onboarding_status"] == "skipped"
     assert body["balance"] == "10000.00"
     assert body["display_number"]
     assert body["account_number"] >= 100000
     assert 0 <= body["digit"] <= 9
+    UUID(body["id"])  # public account id is UUID v4
 
     again = client.post("/v1/onboarding/skip")
     assert again.status_code == 200
@@ -41,6 +44,14 @@ def test_skip_opens_account_with_number(client: TestClient) -> None:
     account = client.get("/v1/me/account")
     assert account.status_code == 200
     assert account.json()["display_number"] == body["display_number"]
+
+    txns = client.get("/v1/me/transactions")
+    assert txns.status_code == 200
+    page = txns.json()
+    assert page["transactions"]
+    UUID(page["transactions"][0]["id"])
+    if page["next_cursor"] is not None:
+        UUID(page["next_cursor"])
 
 
 def test_onboarding_complete_full(client: TestClient) -> None:

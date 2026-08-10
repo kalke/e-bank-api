@@ -5,13 +5,13 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
-from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.logger import get_logger
+from app.domain.ids import new_uuid
 from app.domain.money import Money
 from app.domain.validation import (
     require_adult,
@@ -160,7 +160,7 @@ class OnboardingCompletionService:
 
         identity = await self._numbers.next_identity()
         account = Account(
-            id=f"chk_{uuid4().hex[:16]}",
+            id=new_uuid(),
             owner_subject=subject,
             kind="checking",
             currency=self._settings.welcome_currency,

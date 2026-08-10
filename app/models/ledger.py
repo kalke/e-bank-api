@@ -1,15 +1,11 @@
 from datetime import datetime
 from decimal import Decimal
-from uuid import uuid4
 
 from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
-
-
-def _uuid() -> str:
-    return str(uuid4())
+from app.domain.ids import new_uuid
 
 
 class LedgerAccount(Base):
@@ -29,7 +25,7 @@ class LedgerAccount(Base):
 class JournalEntry(Base):
     __tablename__ = "journal_entries"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

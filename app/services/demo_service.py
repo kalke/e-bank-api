@@ -112,13 +112,13 @@ class DemoBankService:
         subject: str,
         *,
         limit: int = 20,
-        cursor: int | None = None,
+        cursor: str | None = None,
     ) -> list[dict]:
         account = await self._require_owned_checking(subject)
         rows = await self._accounts.list_transactions(
             account.id,
             limit=min(limit, 100),
-            before_id=cursor,
+            before_public_id=cursor,
         )
         return [
             {
