@@ -141,14 +141,7 @@ class OnboardingCompletionService:
             )
         )
         account = existing.scalar_one_or_none()
-        if account is not None:
-            user = await self._users.get(subject)
-            return self._view(
-                account,
-                user.onboarding_status if user else onboarding_status,
-                demo_credited=user.demo_credited_at is not None if user else False,
-                holder_name=holder_data.get("full_name"),
-            )
+        created = account is None
 
         holder = await self._session.get(Holder, subject)
         if holder is None:
@@ -158,20 +151,27 @@ class OnboardingCompletionService:
             setattr(holder, key, value)
         await self._session.flush()
 
-        identity = await self._numbers.next_identity()
-        account = Account(
-            id=new_uuid(),
-            owner_subject=subject,
-            kind="checking",
-            currency=self._settings.welcome_currency,
-            status="active",
-            account_number=identity.account_number,
-            digit=identity.digit,
-            balance_cached=Decimal("0"),
-            overdraft_limit=Decimal("0"),
-        )
-        self._session.add(account)
-        await self._session.flush()
+        if account is None:
+            identity = await self._numbers.next_identity()
+            account = Account(
+                id=new_uuid(),
+                owner_subject=subject,
+                kind="checking",
+                currency=self._settings.welcome_currency,
+                status="active",
+                account_number=identity.account_number,
+                digit=identity.digit,
+                balance_cached=Decimal("0"),
+                overdraft_limit=Decimal("0"),
+            )
+            self._session.add(account)
+            await self._session.flush()
+        elif account.account_number is None or account.digit is None:
+            # Legacy / partial rows — keep the same user-owned account id.
+            identity = await self._numbers.next_identity()
+            account.account_number = identity.account_number
+            account.digit = identity.digit
+            await self._session.flush()
 
         welcome = Money(self._settings.welcome_amount)
         grant = await self._grants.get(subject)
@@ -191,6 +191,13 @@ class OnboardingCompletionService:
                 self._settings.welcome_currency,
             )
             await self._users.mark_demo_credited(subject)
+            demo_credited = True
+        else:
+            user = await self._users.get(subject)
+            demo_credited = bool(user and user.demo_credited_at is not None)
+            if not demo_credited:
+                await self._users.mark_demo_credited(subject)
+                demo_credited = True
 
         session = await self._onboarding.latest_session(subject)
         if session is not None:
@@ -200,11 +207,12 @@ class OnboardingCompletionService:
                 session.skipped_at = now
             else:
                 session.completed_at = now
+        # Always bind completion to the Keycloak user (subject), never to browser session.
         await self._users.set_onboarding_status(subject, onboarding_status)
         await self._session.refresh(account)
 
         logger.info(
-            "account_opened",
+            "account_opened" if created else "account_upgraded",
             subject=subject,
             account_display=account.display_number,
             status=onboarding_status,
@@ -212,7 +220,7 @@ class OnboardingCompletionService:
         return self._view(
             account,
             onboarding_status,
-            demo_credited=True,
+            demo_credited=demo_credited,
             holder_name=holder.full_name,
         )
 

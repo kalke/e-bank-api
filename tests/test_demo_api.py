@@ -54,6 +54,42 @@ def test_skip_opens_account_with_number(client: TestClient) -> None:
         UUID(page["next_cursor"])
 
 
+def test_skip_then_complete_keeps_same_user_account(client: TestClient) -> None:
+    """Re-running KYC after skip must upgrade the same subject-owned account."""
+    skipped = _open_account(client)
+    account_id = skipped["id"]
+
+    # Wizard restart sets in_progress (same as the playground confirm flow).
+    client.post("/v1/onboarding/start")
+    assert client.get("/v1/me/account").status_code == 400
+
+    complete = client.post(
+        "/v1/onboarding/complete",
+        json={
+            "full_name": "Maria Silva",
+            "birth_date": "1990-05-20",
+            "document_number": VALID_CPF,
+            "cep": "01310100",
+            "street": "Av Paulista",
+            "number": "1000",
+            "email": "maria@example.com",
+            "phone": "11987654321",
+            "terms_accepted": True,
+        },
+    )
+    assert complete.status_code == 200, complete.json()
+    body = complete.json()
+    assert body["id"] == account_id
+    assert body["onboarding_status"] == "completed"
+    assert body["holder_name"] == "Maria Silva"
+    assert body["display_number"]
+
+    me = client.get("/v1/me/account")
+    assert me.status_code == 200
+    assert me.json()["id"] == account_id
+    assert me.json()["onboarding_status"] == "completed"
+
+
 def test_onboarding_complete_full(client: TestClient) -> None:
     client.post("/v1/onboarding/start")
     complete = client.post(
