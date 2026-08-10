@@ -210,4 +210,3 @@ def _is_m2m_claims(claims: dict[str, Any]) -> bool:
     if azp and sub and ("service-account" in preferred or azp in sub):
         return True
     return "service-account-" in preferred
-
