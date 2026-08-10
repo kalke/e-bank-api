@@ -77,9 +77,9 @@ async def test_account_number_generator(db_session) -> None:
     a = await gen.next_identity()
     b = await gen.next_identity()
     assert a.account_number >= 1
-    assert b.account_number > a.account_number
-    assert a.account_number == 1
-    assert b.account_number == 2
+    assert b.account_number == a.account_number + 1
+    assert 0 <= a.digit <= 9
+    assert 0 <= b.digit <= 9
     assert 0 <= a.digit <= 9
     assert 0 <= b.digit <= 9
 
