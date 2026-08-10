@@ -182,6 +182,7 @@ jobs:
               "OIDC_ENABLED": "true",
               "OIDC_ISSUER": os.environ.get("OIDC_ISSUER") or "https://auth.kalke.dev/realms/kalke",
               "OIDC_AUDIENCE": os.environ.get("OIDC_AUDIENCE") or "e-bank-api",
+              "OIDC_DISCOVERY_URL": "http://auth:8081/realms/kalke",
               "M2M_USER_FORWARD_SECRET": os.environ["M2M_USER_FORWARD_SECRET"],
               "WELCOME_AMOUNT": "10000.00",
               "WELCOME_CURRENCY": "USD",
