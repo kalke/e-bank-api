@@ -6,14 +6,18 @@ import csv
 import io
 from typing import Any
 
-
 EXPORT_MAX_ROWS = 500
 
 
 def build_statement_csv(rows: list[dict[str, Any]]) -> bytes:
     """UTF-8 BOM + semicolon delimiter (BR spreadsheet friendly)."""
     buf = io.StringIO()
-    writer = csv.writer(buf, delimiter=";", lineterminator="\n", quoting=csv.QUOTE_MINIMAL)
+    writer = csv.writer(
+        buf,
+        delimiter=";",
+        lineterminator="\n",
+        quoting=csv.QUOTE_MINIMAL,
+    )
     writer.writerow(
         [
             "id",

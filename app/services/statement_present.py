@@ -184,9 +184,7 @@ def present_transaction(
         subtitle = "—"
 
     created = (
-        created_at.isoformat()
-        if hasattr(created_at, "isoformat")
-        else str(created_at)
+        created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at)
     )
 
     return {

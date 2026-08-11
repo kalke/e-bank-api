@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from app.services.statement_export import build_statement_csv
@@ -26,7 +26,7 @@ def test_present_transfer_out() -> None:
         tx_type="transfer_out",
         counterparty_account_id="acc2",
         memo="  hello  ",
-        created_at=datetime(2026, 1, 2, 12, 0, tzinfo=timezone.utc),
+        created_at=datetime(2026, 1, 2, 12, 0, tzinfo=UTC),
         currency="USD",
         counterparty=CounterpartyContext(
             account_id="acc2",

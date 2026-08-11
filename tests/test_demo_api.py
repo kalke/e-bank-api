@@ -336,7 +336,8 @@ def test_transactions_presented_and_receipt(client: TestClient) -> None:
     assert receipt.content.startswith(b"%PDF")
     assert "attachment" in receipt.headers.get("content-disposition", "")
 
-    missing = client.get("/v1/me/transactions/00000000-0000-4000-8000-000000000099/receipt.pdf")
+    missing_id = "00000000-0000-4000-8000-000000000099"
+    missing = client.get(f"/v1/me/transactions/{missing_id}/receipt.pdf")
     assert missing.status_code == 404
 
 
@@ -350,4 +351,3 @@ def test_statement_export_csv_pdf(client: TestClient) -> None:
     pdf_res = client.get("/v1/me/statement/export.pdf")
     assert pdf_res.status_code == 200
     assert pdf_res.content.startswith(b"%PDF")
-

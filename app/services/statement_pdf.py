@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from reportlab.lib import colors
@@ -110,14 +110,15 @@ def build_receipt_pdf(presented: dict[str, Any], *, parties: dict[str, Any]) -> 
         str(presented.get("amount") or ""),
         str(presented.get("created_at") or ""),
     )
-    issued = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    issued = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
     story: list[Any] = [
         Paragraph("kalke", s["brand"]),
         Paragraph("DEMO BANCÁRIA", s["eyebrow"]),
         Paragraph("Comprovante de transação", s["h1"]),
         Paragraph(
-            "Documento fictício para demonstração — nenhum valor é liquidado de verdade.",
+            "Documento fictício para demonstração — "
+            "nenhum valor é liquidado de verdade.",
             s["muted"],
         ),
         Spacer(1, 8),
@@ -208,7 +209,7 @@ def build_statement_pdf(
         bottomMargin=14 * mm,
     )
     s = _styles()
-    issued = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    issued = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     story: list[Any] = [
         Paragraph("kalke", s["brand"]),
         Paragraph("DEMO BANCÁRIA · EXTRATO", s["eyebrow"]),
@@ -226,7 +227,9 @@ def build_statement_pdf(
     data = [["Data", "Descrição", "Valor", "Saldo"]]
     for row in rows:
         created = str(row.get("created_at") or "")[:16].replace("T", " ")
-        desc = f"{row.get('title') or row.get('type') or ''}<br/>{row.get('subtitle') or ''}"
+        title = row.get("title") or row.get("type") or ""
+        subtitle = row.get("subtitle") or ""
+        desc = f"{title}<br/>{subtitle}"
         data.append(
             [
                 created,

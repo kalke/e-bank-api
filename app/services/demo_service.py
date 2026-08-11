@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -199,7 +199,7 @@ class DemoBankService:
             max_amount=self._optional_decimal(max_amount),
             direction=(direction or "").strip().lower() or None,
         )
-        # Soft type aliases (e.g. transfer) may need post-filter when SQL used exact types.
+        # Soft type aliases may need post-filter when SQL used exact types.
         if tx_type and types is None:
             rows = [r for r in rows if type_filter_match(r.type, tx_type)]
         return await self._present_rows(rows, currency=account.currency)
@@ -422,16 +422,10 @@ class DemoBankService:
 
     async def _counterparty_map(self, rows) -> dict[str, CounterpartyContext]:
         ids = sorted(
-            {
-                r.counterparty_account_id
-                for r in rows
-                if r.counterparty_account_id
-            }
+            {r.counterparty_account_id for r in rows if r.counterparty_account_id}
         )
         accounts = await self._accounts.get_many(ids)
-        owner_ids = {
-            a.owner_subject for a in accounts.values() if a.owner_subject
-        }
+        owner_ids = {a.owner_subject for a in accounts.values() if a.owner_subject}
         holders: dict[str, Holder] = {}
         for oid in owner_ids:
             holder = await self._session.get(Holder, oid)
@@ -441,7 +435,11 @@ class DemoBankService:
         for aid, acc in accounts.items():
             holder = holders.get(acc.owner_subject or "")
             display = acc.display_number
-            if display is None and acc.account_number is not None and acc.digit is not None:
+            if (
+                display is None
+                and acc.account_number is not None
+                and acc.digit is not None
+            ):
                 display = format_account_display(acc.account_number, acc.digit)
             out[aid] = CounterpartyContext(
                 account_id=aid,
@@ -520,8 +518,9 @@ class DemoBankService:
         except ValueError:
             return None
         if end:
-            return datetime.combine(d + timedelta(days=1), time.min, tzinfo=timezone.utc)
-        return datetime.combine(d, time.min, tzinfo=timezone.utc)
+            next_day = d + timedelta(days=1)
+            return datetime.combine(next_day, time.min, tzinfo=UTC)
+        return datetime.combine(d, time.min, tzinfo=UTC)
 
     @staticmethod
     def _period_label(date_from: str | None, date_to: str | None) -> str:
