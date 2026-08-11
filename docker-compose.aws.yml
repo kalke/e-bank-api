@@ -28,7 +28,6 @@ services:
         awslogs-region: ${AWS_REGION:-us-east-1}
         awslogs-group: /kalke/e-bank-api
         awslogs-create-group: "true"
-        awslogs-stream-prefix: api
     expose:
       - "8000"
     mem_limit: 256m
