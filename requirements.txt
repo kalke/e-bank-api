@@ -9,3 +9,4 @@ sqlalchemy[asyncio]>=2.0.51
 asyncpg>=0.29
 alembic>=1.19.0
 PyJWT[crypto]>=2.8
+reportlab>=4.0

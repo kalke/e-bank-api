@@ -213,12 +213,58 @@ class AccountRepository:
             return AccountRecord(id=account_id, balance=balance)
         return self._to_record(account, Decimal(str(account.balance_cached or balance)))
 
+    async def get_transaction_by_public_id(
+        self,
+        public_id: str,
+    ) -> TransactionRecord | None:
+        result = await self._session.execute(
+            select(Transaction).where(Transaction.public_id == public_id),
+        )
+        row = result.scalar_one_or_none()
+        if row is None:
+            return None
+        return self._to_tx_record(row)
+
+    async def get_many(self, account_ids: list[str]) -> dict[str, AccountRecord]:
+        if not account_ids:
+            return {}
+        result = await self._session.execute(
+            select(Account).where(Account.id.in_(account_ids)),
+        )
+        out: dict[str, AccountRecord] = {}
+        for account in result.scalars().all():
+            balance = await self._balance_for(account)
+            out[account.id] = self._to_record(account, balance)
+        return out
+
+    async def sum_amount_before(
+        self,
+        account_id: str,
+        *,
+        before,
+    ) -> Decimal:
+        """Sum ledger amounts strictly before `before` (opening balance helper)."""
+        result = await self._session.execute(
+            select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                Transaction.account_id == account_id,
+                Transaction.created_at < before,
+            ),
+        )
+        return Decimal(str(result.scalar_one()))
+
     async def list_transactions(
         self,
         account_id: str,
         *,
         limit: int = 20,
         before_public_id: str | None = None,
+        created_from=None,
+        created_to=None,
+        types: list[str] | None = None,
+        min_amount: Decimal | None = None,
+        max_amount: Decimal | None = None,
+        direction: str | None = None,
+        chronological: bool = False,
     ) -> list[TransactionRecord]:
         before_id: int | None = None
         if before_public_id:
@@ -231,29 +277,44 @@ class AccountRepository:
             before_id = cursor_row.scalar_one_or_none()
             if before_id is None:
                 return []
-        stmt = (
-            select(Transaction)
-            .where(Transaction.account_id == account_id)
-            .order_by(Transaction.id.desc())
-            .limit(limit)
-        )
+        stmt = select(Transaction).where(Transaction.account_id == account_id)
         if before_id is not None:
             stmt = stmt.where(Transaction.id < before_id)
+        if created_from is not None:
+            stmt = stmt.where(Transaction.created_at >= created_from)
+        if created_to is not None:
+            stmt = stmt.where(Transaction.created_at < created_to)
+        if types:
+            stmt = stmt.where(Transaction.type.in_(types))
+        if min_amount is not None:
+            stmt = stmt.where(Transaction.amount >= min_amount)
+        if max_amount is not None:
+            stmt = stmt.where(Transaction.amount <= max_amount)
+        if direction == "in":
+            stmt = stmt.where(Transaction.amount >= 0)
+        elif direction == "out":
+            stmt = stmt.where(Transaction.amount < 0)
+        if chronological:
+            stmt = stmt.order_by(Transaction.id.asc())
+        else:
+            stmt = stmt.order_by(Transaction.id.desc())
+        stmt = stmt.limit(limit)
         result = await self._session.execute(stmt)
         rows = result.scalars().all()
-        return [
-            TransactionRecord(
-                id=row.public_id,
-                internal_id=row.id,
-                account_id=row.account_id,
-                amount=row.amount,
-                type=row.type,
-                counterparty_account_id=row.counterparty_account_id,
-                memo=row.memo,
-                created_at=row.created_at,
-            )
-            for row in rows
-        ]
+        return [self._to_tx_record(row) for row in rows]
+
+    @staticmethod
+    def _to_tx_record(row: Transaction) -> TransactionRecord:
+        return TransactionRecord(
+            id=row.public_id,
+            internal_id=row.id,
+            account_id=row.account_id,
+            amount=row.amount,
+            type=row.type,
+            counterparty_account_id=row.counterparty_account_id,
+            memo=row.memo,
+            created_at=row.created_at,
+        )
 
     async def delete_all(self) -> None:
         bind = self._session.get_bind()

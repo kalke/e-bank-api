@@ -315,3 +315,39 @@ def test_ready(client: TestClient) -> None:
     response = client.get("/ready")
     assert response.status_code == 200
     assert response.json()["status"] == "ready"
+
+
+def test_transactions_presented_and_receipt(client: TestClient) -> None:
+    _open_account(client)
+    page = client.get("/v1/me/transactions")
+    assert page.status_code == 200
+    tx = page.json()["transactions"][0]
+    assert tx["title"]
+    assert tx["direction"] in {"in", "out"}
+    assert tx["badge"]
+    assert "subtitle" in tx
+
+    detail = client.get(f"/v1/me/transactions/{tx['id']}")
+    assert detail.status_code == 200
+    assert "parties" in detail.json()
+
+    receipt = client.get(f"/v1/me/transactions/{tx['id']}/receipt.pdf")
+    assert receipt.status_code == 200
+    assert receipt.content.startswith(b"%PDF")
+    assert "attachment" in receipt.headers.get("content-disposition", "")
+
+    missing = client.get("/v1/me/transactions/00000000-0000-4000-8000-000000000099/receipt.pdf")
+    assert missing.status_code == 404
+
+
+def test_statement_export_csv_pdf(client: TestClient) -> None:
+    _open_account(client)
+    csv_res = client.get("/v1/me/statement/export.csv")
+    assert csv_res.status_code == 200
+    assert csv_res.content.startswith(b"\xef\xbb\xbf")
+    assert b";" in csv_res.content
+
+    pdf_res = client.get("/v1/me/statement/export.pdf")
+    assert pdf_res.status_code == 200
+    assert pdf_res.content.startswith(b"%PDF")
+

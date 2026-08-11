@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, Query, Request
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.deps import require_authenticated_bank_write
@@ -80,6 +81,8 @@ async def demo_meta() -> DemoMetaOut:
             "transfer_resolve",
             "withdraw",
             "transaction_history",
+            "statement_export",
+            "transaction_receipt",
             "double_entry_ledger",
         ],
     )
@@ -154,6 +157,13 @@ async def my_account_detail(
 async def my_transactions(
     limit: int = 20,
     cursor: str | None = None,
+    account_id: str | None = None,
+    date_from: str | None = Query(None, alias="from"),
+    date_to: str | None = Query(None, alias="to"),
+    type: str | None = None,
+    direction: str | None = None,
+    min_amount: str | None = None,
+    max_amount: str | None = None,
     db: AsyncSession = Depends(get_db),
     principal: Principal = Depends(require_authenticated_bank_write),
 ) -> dict:
@@ -161,9 +171,104 @@ async def my_transactions(
         principal.subject,
         limit=limit,
         cursor=cursor,
+        account_id=account_id,
+        date_from=date_from,
+        date_to=date_to,
+        tx_type=type,
+        direction=direction,
+        min_amount=min_amount,
+        max_amount=max_amount,
     )
     next_cursor = items[-1]["id"] if items else None
     return {"transactions": items, "next_cursor": next_cursor, "demo": True}
+
+
+@router.get("/me/transactions/{public_id}")
+async def my_transaction_detail(
+    public_id: str,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_authenticated_bank_write),
+) -> dict:
+    detail = await DemoBankService(db).get_transaction(principal.subject, public_id)
+    detail["demo"] = True
+    return detail
+
+
+@router.get("/me/transactions/{public_id}/receipt.pdf")
+async def my_transaction_receipt(
+    public_id: str,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_authenticated_bank_write),
+) -> Response:
+    pdf, filename = await DemoBankService(db).get_receipt_pdf(
+        principal.subject,
+        public_id,
+    )
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/me/statement/export.csv")
+async def export_statement_csv(
+    account_id: str | None = None,
+    date_from: str | None = Query(None, alias="from"),
+    date_to: str | None = Query(None, alias="to"),
+    type: str | None = None,
+    direction: str | None = None,
+    min_amount: str | None = None,
+    max_amount: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_authenticated_bank_write),
+) -> Response:
+    body, media, filename = await DemoBankService(db).export_statement(
+        principal.subject,
+        fmt="csv",
+        account_id=account_id,
+        date_from=date_from,
+        date_to=date_to,
+        tx_type=type,
+        direction=direction,
+        min_amount=min_amount,
+        max_amount=max_amount,
+    )
+    return Response(
+        content=body,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/me/statement/export.pdf")
+async def export_statement_pdf(
+    account_id: str | None = None,
+    date_from: str | None = Query(None, alias="from"),
+    date_to: str | None = Query(None, alias="to"),
+    type: str | None = None,
+    direction: str | None = None,
+    min_amount: str | None = None,
+    max_amount: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_authenticated_bank_write),
+) -> Response:
+    body, media, filename = await DemoBankService(db).export_statement(
+        principal.subject,
+        fmt="pdf",
+        account_id=account_id,
+        date_from=date_from,
+        date_to=date_to,
+        tx_type=type,
+        direction=direction,
+        min_amount=min_amount,
+        max_amount=max_amount,
+    )
+    return Response(
+        content=body,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/me/transfers/resolve")
