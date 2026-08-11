@@ -135,10 +135,13 @@ class OnboardingCompletionService:
         idempotency_key: str | None,
     ) -> DemoAccountView:
         existing = await self._session.execute(
-            select(Account).where(
+            select(Account)
+            .where(
                 Account.owner_subject == subject,
                 Account.kind == "checking",
             )
+            .order_by(Account.created_at.asc(), Account.id.asc())
+            .limit(1)
         )
         account = existing.scalar_one_or_none()
         created = account is None
@@ -222,6 +225,56 @@ class OnboardingCompletionService:
             onboarding_status,
             demo_credited=demo_credited,
             holder_name=holder.full_name,
+        )
+
+    async def open_extra_checking(
+        self,
+        subject: str,
+        *,
+        holder_name: str,
+        onboarding_status: str,
+        request_id: str | None,
+        source_ip: str | None,
+        user_agent: str | None,
+        idempotency_key: str | None,
+    ) -> DemoAccountView:
+        identity = await self._numbers.next_identity()
+        account = Account(
+            id=new_uuid(),
+            owner_subject=subject,
+            kind="checking",
+            currency=self._settings.welcome_currency,
+            status="active",
+            account_number=identity.account_number,
+            digit=identity.digit,
+            balance_cached=Decimal("0"),
+            overdraft_limit=Decimal("0"),
+        )
+        self._session.add(account)
+        await self._session.flush()
+
+        welcome = Money(self._settings.welcome_amount)
+        key = idempotency_key or f"welcome-extra:{subject}:{account.id}"
+        await self._ledger.welcome_grant(
+            account,
+            welcome.amount,
+            actor_subject=subject,
+            request_id=request_id,
+            idempotency_key=key,
+            source_ip=source_ip,
+            user_agent=user_agent,
+        )
+        await self._session.refresh(account)
+        logger.info(
+            "extra_account_opened",
+            subject=subject,
+            account_display=account.display_number,
+        )
+        return self._view(
+            account,
+            onboarding_status,
+            demo_credited=True,
+            holder_name=holder_name,
         )
 
     @staticmethod

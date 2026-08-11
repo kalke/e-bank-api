@@ -34,16 +34,34 @@ class TransferService:
         if user is None or user.onboarding_status not in {"completed", "skipped"}:
             raise OnboardingError("complete onboarding before using the bank")
         result = await self._session.execute(
-            select(Account).where(
+            select(Account)
+            .where(
                 Account.owner_subject == subject,
                 Account.kind == "checking",
             )
+            .order_by(Account.created_at.asc(), Account.id.asc())
+            .limit(1)
         )
         account = result.scalar_one_or_none()
         if account is None:
             raise AccountNotFound("checking")
         if account.status != "active":
             raise ForbiddenAccountAccess(account.id)
+        return account
+
+    async def require_owned_account(
+        self,
+        subject: str,
+        account_id: str,
+    ) -> Account:
+        user = await self._session.get(User, subject)
+        if user is None or user.onboarding_status not in {"completed", "skipped"}:
+            raise OnboardingError("complete onboarding before using the bank")
+        account = await self._session.get(Account, account_id)
+        if account is None or account.owner_subject != subject:
+            raise ForbiddenAccountAccess(account_id)
+        if account.status != "active":
+            raise ForbiddenAccountAccess(account_id)
         return account
 
     async def resolve(
@@ -65,6 +83,7 @@ class TransferService:
         subject: str,
         *,
         amount: str,
+        source_account_id: str | None = None,
         destination_account_id: str | None = None,
         destination_account: str | None = None,
         destination_document: str | None = None,
@@ -82,7 +101,11 @@ class TransferService:
         if money.amount > max_transfer.amount:
             raise TransferLimitExceeded(money.as_str(), max_transfer.as_str())
 
-        origin = await self.require_onboarded_account(subject)
+        origin = (
+            await self.require_owned_account(subject, source_account_id)
+            if source_account_id
+            else await self.require_onboarded_account(subject)
+        )
 
         if destination_account_id:
             dest = await self._session.get(Account, destination_account_id)

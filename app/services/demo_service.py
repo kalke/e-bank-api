@@ -91,21 +91,74 @@ class DemoBankService:
         )
 
     async def list_accounts(self, subject: str) -> list[DemoAccountView]:
-        try:
-            view = await self.get_my_account(subject)
-            return [view]
-        except (AccountNotFound, OnboardingError):
+        user = await self._users.get(subject)
+        if user is None or user.onboarding_status not in {"completed", "skipped"}:
             return []
+        rows = await self._accounts.list_by_owner_kind(subject, "checking")
+        holder = await self._session.get(Holder, subject)
+        return [
+            self._view(
+                row,
+                user.onboarding_status,
+                demo_credited=user.demo_credited_at is not None,
+                holder_name=holder.full_name if holder else None,
+            )
+            for row in rows
+        ]
+
+    async def open_additional_account(
+        self,
+        subject: str,
+        *,
+        request_id: str | None = None,
+        source_ip: str | None = None,
+        user_agent: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> DemoAccountView:
+        """Open another checking account for the same holder/CPF (demo transfers)."""
+        user = await self._users.get(subject)
+        if user is None or user.onboarding_status not in {"completed", "skipped"}:
+            raise OnboardingError("complete onboarding before using the bank")
+        holder = await self._session.get(Holder, subject)
+        if holder is None:
+            raise OnboardingError("complete onboarding before using the bank")
+
+        limit = int(self._settings.max_checking_accounts_per_user)
+        count = await self._accounts.count_by_owner_kind(subject, "checking")
+        if count >= limit:
+            raise OnboardingError(f"account limit reached ({limit})")
+
+        from app.services.onboarding_complete import OnboardingCompletionService
+
+        return await OnboardingCompletionService(self._session).open_extra_checking(
+            subject,
+            holder_name=holder.full_name,
+            onboarding_status=user.onboarding_status,
+            request_id=request_id,
+            source_ip=source_ip,
+            user_agent=user_agent,
+            idempotency_key=idempotency_key,
+        )
 
     async def get_account_by_display(
         self,
         subject: str,
         display: str,
     ) -> DemoAccountView:
-        view = await self.get_my_account(subject)
-        if view.display_number != display and view.id != display:
-            raise ForbiddenAccountAccess(display)
-        return view
+        user = await self._users.get(subject)
+        if user is None or user.onboarding_status not in {"completed", "skipped"}:
+            raise OnboardingError("complete onboarding before using the bank")
+        rows = await self._accounts.list_by_owner_kind(subject, "checking")
+        holder = await self._session.get(Holder, subject)
+        for row in rows:
+            if row.display_number == display or row.id == display:
+                return self._view(
+                    row,
+                    user.onboarding_status,
+                    demo_credited=user.demo_credited_at is not None,
+                    holder_name=holder.full_name if holder else None,
+                )
+        raise ForbiddenAccountAccess(display)
 
     async def list_transactions(
         self,
@@ -144,6 +197,7 @@ class DemoBankService:
         destination_document: str | None = None,
         amount: str,
         memo: str | None = None,
+        source_account_id: str | None = None,
         request_id: str | None = None,
         idempotency_key: str | None = None,
         source_ip: str | None = None,
@@ -152,6 +206,7 @@ class DemoBankService:
         return await self._transfers.transfer(
             subject,
             amount=amount,
+            source_account_id=source_account_id,
             destination_account_id=destination_account_id,
             destination_account=destination_account,
             destination_document=destination_document,

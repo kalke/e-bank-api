@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     welcome_amount: str = "10000.00"
     welcome_currency: str = "USD"
     account_number_start: int = 1
+    max_checking_accounts_per_user: int = 5
     max_transfer_amount: str = "10000.00"
     max_withdraw_amount: str = "10000.00"
     demo_disclaimer: str = (

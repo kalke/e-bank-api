@@ -90,6 +90,63 @@ def test_skip_then_complete_keeps_same_user_account(client: TestClient) -> None:
     assert me.json()["onboarding_status"] == "completed"
 
 
+def test_additional_checking_accounts_same_cpf(client: TestClient) -> None:
+    client.post("/v1/onboarding/start")
+    first = client.post(
+        "/v1/onboarding/complete",
+        json={
+            "full_name": "Maria Silva",
+            "birth_date": "1990-05-20",
+            "document_number": VALID_CPF,
+            "cep": "01310100",
+            "street": "Av Paulista",
+            "number": "1000",
+            "email": "maria@example.com",
+            "phone": "11987654321",
+            "terms_accepted": True,
+        },
+    )
+    assert first.status_code == 200, first.json()
+    first_body = first.json()
+
+    listed = client.get("/v1/me/accounts")
+    assert listed.status_code == 200
+    assert len(listed.json()["accounts"]) == 1
+
+    second = client.post(
+        "/v1/me/accounts",
+        headers={"Idempotency-Key": "extra-acct-1"},
+    )
+    assert second.status_code == 200, second.json()
+    assert second.json()["id"] != first_body["id"]
+    assert second.json()["display_number"] != first_body["display_number"]
+    assert second.json()["balance"] == "10000.00"
+
+    listed = client.get("/v1/me/accounts")
+    assert len(listed.json()["accounts"]) == 2
+
+    # Transfer between own accounts (same CPF holder) by account number.
+    xfer = client.post(
+        "/v1/me/transfer",
+        headers={"Idempotency-Key": "xfer-multi-1"},
+        json={
+            "source_account_id": first_body["id"],
+            "destination_account": second.json()["display_number"],
+            "amount": "25.00",
+        },
+    )
+    assert xfer.status_code == 200, xfer.json()
+    assert xfer.json()["origin"]["balance"] == "9975.00"
+    assert xfer.json()["destination"]["balance"] == "10025.00"
+
+    # CPF alone is ambiguous once there are multiple accounts.
+    resolve = client.post(
+        "/v1/me/transfers/resolve",
+        json={"document": VALID_CPF},
+    )
+    assert resolve.status_code == 400
+
+
 def test_onboarding_complete_full(client: TestClient) -> None:
     client.post("/v1/onboarding/start")
     complete = client.post(

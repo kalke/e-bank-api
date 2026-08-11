@@ -71,14 +71,23 @@ class RecipientResolver:
         if holder is None:
             raise AccountNotFound(doc)
         acc_result = await self._session.execute(
-            select(Account).where(
+            select(Account)
+            .where(
                 Account.owner_subject == holder.subject,
                 Account.kind == "checking",
                 Account.status == "active",
             )
+            .order_by(Account.created_at.asc(), Account.id.asc())
         )
-        acc = acc_result.scalar_one_or_none()
-        if acc is None or acc.account_number is None or acc.digit is None:
+        accounts = list(acc_result.scalars().all())
+        if not accounts:
+            raise AccountNotFound(doc)
+        if len(accounts) > 1:
+            raise OnboardingError(
+                "multiple accounts for this document; use account number"
+            )
+        acc = accounts[0]
+        if acc.account_number is None or acc.digit is None:
             raise AccountNotFound(doc)
         return ResolvedRecipient(
             account_id=acc.id,

@@ -62,17 +62,56 @@ class AccountRepository:
         owner_subject: str,
         kind: str = "checking",
     ) -> AccountRecord | None:
+        """Return the oldest active-or-any checking account for the owner."""
         result = await self._session.execute(
-            select(Account).where(
+            select(Account)
+            .where(
                 Account.owner_subject == owner_subject,
                 Account.kind == kind,
-            ),
+            )
+            .order_by(Account.created_at.asc(), Account.id.asc())
+            .limit(1),
         )
         account = result.scalar_one_or_none()
         if account is None:
             return None
         balance = await self._balance_for(account)
         return self._to_record(account, balance)
+
+    async def list_by_owner_kind(
+        self,
+        owner_subject: str,
+        kind: str = "checking",
+    ) -> list[AccountRecord]:
+        result = await self._session.execute(
+            select(Account)
+            .where(
+                Account.owner_subject == owner_subject,
+                Account.kind == kind,
+            )
+            .order_by(Account.created_at.asc(), Account.id.asc()),
+        )
+        rows = list(result.scalars().all())
+        out: list[AccountRecord] = []
+        for account in rows:
+            balance = await self._balance_for(account)
+            out.append(self._to_record(account, balance))
+        return out
+
+    async def count_by_owner_kind(
+        self,
+        owner_subject: str,
+        kind: str = "checking",
+    ) -> int:
+        result = await self._session.execute(
+            select(func.count())
+            .select_from(Account)
+            .where(
+                Account.owner_subject == owner_subject,
+                Account.kind == kind,
+            ),
+        )
+        return int(result.scalar_one())
 
     async def ensure_account(
         self,

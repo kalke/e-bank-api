@@ -8,7 +8,6 @@ from sqlalchemy import (
     Numeric,
     SmallInteger,
     String,
-    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -18,9 +17,8 @@ from app.core.database import Base
 
 class Account(Base):
     __tablename__ = "accounts"
-    __table_args__ = (
-        UniqueConstraint("owner_subject", "kind", name="uq_accounts_owner_kind"),
-    )
+    # Multiple checking accounts per subject are allowed (demo transfers).
+    __table_args__ = ()
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     owner_subject: Mapped[str | None] = mapped_column(

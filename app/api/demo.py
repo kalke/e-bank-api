@@ -75,6 +75,7 @@ async def demo_meta() -> DemoMetaOut:
             "welcome_grant",
             "onboarding_wizard",
             "skippable_due_diligence",
+            "multiple_checking_accounts",
             "transfer",
             "transfer_resolve",
             "withdraw",
@@ -118,6 +119,25 @@ async def my_accounts(
         "accounts": [_demo_account_out(v).model_dump() for v in items],
         "demo": True,
     }
+
+
+@router.post("/me/accounts", response_model=DemoAccountOut)
+async def open_additional_account(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_authenticated_bank_write),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> DemoAccountOut:
+    await _enforce_rate_limit(request, principal)
+    ip, ua = _client_meta(request)
+    view = await DemoBankService(db).open_additional_account(
+        principal.subject,
+        request_id=getattr(request.state, "request_id", None),
+        source_ip=ip,
+        user_agent=ua,
+        idempotency_key=idempotency_key,
+    )
+    return _demo_account_out(view)
 
 
 @router.get("/me/accounts/{display}")
@@ -175,6 +195,7 @@ async def transfer(
     ip, ua = _client_meta(request)
     result = await DemoBankService(db).transfer(
         principal.subject,
+        source_account_id=body.source_account_id,
         destination_account_id=body.destination_account_id,
         destination_account=body.destination_account,
         destination_document=body.destination_document,

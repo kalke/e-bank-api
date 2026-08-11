@@ -49,6 +49,7 @@ class DemoAccountOut(BaseModel):
 
 class TransferIn(BaseModel):
     amount: str
+    source_account_id: str | None = Field(default=None, max_length=64)
     destination_account_id: str | None = Field(default=None, max_length=64)
     destination_account: str | None = Field(default=None, max_length=32)
     destination_document: str | None = Field(default=None, max_length=32)
