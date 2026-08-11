@@ -65,6 +65,13 @@ class Settings(BaseSettings):
             return self.reset_enabled.lower() in {"1", "true", "yes", "on"}
         return not self.is_production
 
+    @property
+    def use_json_logs(self) -> bool:
+        fmt = self.log_format.strip().lower()
+        if fmt in {"json", "text"}:
+            return fmt == "json"
+        return self.is_production
+
     def cors_origin_list(self) -> list[str]:
         if self.cors_origins.strip():
             return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
@@ -80,11 +87,4 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    # Load once on first settings access (SECRET_ID unset → no-op for local/tests).
-    from app.core.secrets import apply_startup_secrets
-
-    apply_startup_secrets()
     return Settings()
-
-
-settings = get_settings()

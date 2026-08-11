@@ -5,8 +5,8 @@ import pytest
 import structlog
 from structlog.testing import capture_logs
 
+from app.core.config import get_settings
 from app.core.logger import (
-    SERVICE_NAME,
     configure_logging,
     get_logger,
     sanitize_sensitive_fields,
@@ -16,8 +16,10 @@ from app.core.logger import (
 @pytest.fixture(autouse=True)
 def reset_structlog() -> None:
     structlog.reset_defaults()
+    get_settings.cache_clear()
     yield
     structlog.reset_defaults()
+    get_settings.cache_clear()
 
 
 class TestSanitizeSensitiveFields:
@@ -54,13 +56,18 @@ class TestLoggerConfiguration:
     ) -> None:
         monkeypatch.setenv("ENV", "production")
         monkeypatch.setenv("LOG_LEVEL", "INFO")
+        monkeypatch.setenv("LOG_FORMAT", "json")
+        monkeypatch.setenv("SERVICE_NAME", "e-bank-api")
+        get_settings.cache_clear()
+        configure_logging()
+        service = get_settings().service_name
 
         def add_context(
             _logger: logging.Logger, _method: str, event_dict: dict[str, object]
         ) -> dict[str, object]:
             event_dict.setdefault("logger_name", "test.logger")
             event_dict.setdefault("environment", "production")
-            event_dict.setdefault("service", SERVICE_NAME)
+            event_dict.setdefault("service", service)
             return event_dict
 
         processors = [
@@ -79,7 +86,7 @@ class TestLoggerConfiguration:
         assert entry["log_level"] == "info"
         assert entry["timestamp"]
         assert entry["environment"] == "production"
-        assert entry["service"] == SERVICE_NAME
+        assert entry["service"] == service
         assert entry["request_id"] == "req-123"
 
         rendered = json.loads(
@@ -93,6 +100,16 @@ class TestLoggerConfiguration:
     ) -> None:
         monkeypatch.setenv("ENV", "development")
         monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+        monkeypatch.setenv("LOG_FORMAT", "text")
+        get_settings.cache_clear()
         configure_logging()
         log = get_logger("test.dev")
         log.debug("dev_event", detail="ok")
+
+    def test_log_format_json_overrides_development(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ENV", "development")
+        monkeypatch.setenv("LOG_FORMAT", "json")
+        get_settings.cache_clear()
+        assert get_settings().use_json_logs is True

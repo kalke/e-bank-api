@@ -1,17 +1,13 @@
 from __future__ import annotations
 
 import logging
-import os
 import sys
 from typing import Any
 
 import structlog
 from structlog.types import Processor
 
-SERVICE_NAME = os.getenv("SERVICE_NAME", "e-bank-api")
-ENVIRONMENT = os.getenv("ENV", "development").lower()
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-LOG_FORMAT = os.getenv("LOG_FORMAT", "").strip().lower()
+from app.core.config import get_settings
 
 SENSITIVE_KEYS = frozenset(
     {
@@ -29,6 +25,10 @@ SENSITIVE_KEYS = frozenset(
 
 _REDACTED = "***REDACTED***"
 
+# Bound in configure_logging() after secrets + settings are available.
+_SERVICE_NAME = "e-bank-api"
+_ENVIRONMENT = "development"
+
 
 def sanitize_sensitive_fields(data: dict[str, Any]) -> dict[str, Any]:
     sanitized: dict[str, Any] = {}
@@ -42,19 +42,13 @@ def sanitize_sensitive_fields(data: dict[str, Any]) -> dict[str, Any]:
     return sanitized
 
 
-def _use_json_logs() -> bool:
-    if LOG_FORMAT in {"json", "text"}:
-        return LOG_FORMAT == "json"
-    return ENVIRONMENT in {"production", "prod"}
-
-
 def _add_app_context(
     _logger: logging.Logger,
     _method_name: str,
     event_dict: dict[str, Any],
 ) -> dict[str, Any]:
-    event_dict.setdefault("environment", ENVIRONMENT)
-    event_dict.setdefault("service", SERVICE_NAME)
+    event_dict.setdefault("environment", _ENVIRONMENT)
+    event_dict.setdefault("service", _SERVICE_NAME)
     return event_dict
 
 
@@ -71,9 +65,14 @@ def _pre_chain_processors() -> list[Processor]:
 
 
 def configure_logging() -> None:
-    level = getattr(logging, LOG_LEVEL, logging.INFO)
+    global _SERVICE_NAME, _ENVIRONMENT
+
+    settings = get_settings()
+    _SERVICE_NAME = settings.service_name
+    _ENVIRONMENT = settings.env.lower()
+    level = getattr(logging, settings.log_level.upper(), logging.INFO)
     renderer: Processor
-    if _use_json_logs():
+    if settings.use_json_logs:
         renderer = structlog.processors.JSONRenderer()
     else:
         renderer = structlog.dev.ConsoleRenderer(colors=True)

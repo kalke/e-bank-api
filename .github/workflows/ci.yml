@@ -150,6 +150,7 @@ jobs:
         env:
           AWS_REGION: ${{ secrets.AWS_REGION }}
           SECRET_ID: kalke/e-bank-api/prod
+          REPO_DIR: /home/ubuntu/e-bank-api
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           REDIS_URL: ${{ secrets.REDIS_URL }}
           OIDC_ISSUER: ${{ secrets.OIDC_ISSUER }}
@@ -159,20 +160,16 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
-          python3 - <<'PY'
-          import json, os, subprocess
-          from pathlib import Path
-
-          def q(v: str) -> str:
-              return "'" + v.replace("'", "'\"'\"'") + "'"
-
-          required = ("DATABASE_URL", "REDIS_URL", "M2M_USER_FORWARD_SECRET")
-          missing = [k for k in required if not os.environ.get(k)]
-          if missing:
-              raise SystemExit(f"missing secrets: {', '.join(missing)}")
+          region="${AWS_REGION:-us-east-1}"
+          export AWS_REGION="$region"
+          for k in DATABASE_URL REDIS_URL M2M_USER_FORWARD_SECRET; do
+            [[ -n "${!k:-}" ]] || { echo "missing secret: $k" >&2; exit 1; }
+          done
+          payload="$(mktemp)"
+          python3 - <<'PY' >"${payload}"
+          import json, os
           region = os.environ.get("AWS_REGION") or "us-east-1"
-          secret_id = os.environ["SECRET_ID"]
-          payload = {
+          print(json.dumps({
               "ENV": "production",
               "LOG_LEVEL": "INFO",
               "LOG_FORMAT": "json",
@@ -198,45 +195,13 @@ jobs:
               "CORS_ORIGINS": "https://kalke.dev,https://www.kalke.dev",
               "AWS_REGION": region,
               "S3_BANK_PDF_BUCKET": os.environ.get("S3_BANK_PDF_BUCKET") or "",
-          }
-          raw = json.dumps(payload)
-          put = subprocess.run(
-              [
-                  "aws", "secretsmanager", "put-secret-value",
-                  "--region", region,
-                  "--secret-id", secret_id,
-                  "--secret-string", raw,
-              ],
-              capture_output=True,
-              text=True,
-          )
-          if put.returncode != 0:
-              create = subprocess.run(
-                  [
-                      "aws", "secretsmanager", "create-secret",
-                      "--region", region,
-                      "--name", secret_id,
-                      "--secret-string", raw,
-                  ],
-                  capture_output=True,
-                  text=True,
-              )
-              if create.returncode != 0:
-                  raise SystemExit(
-                      f"secretsmanager put/create failed for {secret_id}: "
-                      f"{put.stderr or put.stdout} / {create.stderr or create.stdout}"
-                  )
-              print(f"created secret {secret_id}")
-          else:
-              print(f"updated secret {secret_id}")
-
-          path = Path.home() / "e-bank-api" / "prod.env"
-          path.write_text(
-              f"AWS_REGION={q(region)}\nSECRET_ID={q(secret_id)}\n"
-              f"S3_BANK_PDF_BUCKET={q(payload['S3_BANK_PDF_BUCKET'])}\n"
-          )
-          print(f"wrote slim {path}")
+          }))
           PY
+          chmod +x "${REPO_DIR}/scripts/sync-secret.sh"
+          "${REPO_DIR}/scripts/sync-secret.sh" \
+            "${SECRET_ID}" "${payload}" "${REPO_DIR}/prod.env" \
+            "S3_BANK_PDF_BUCKET=${S3_BANK_PDF_BUCKET:-}"
+          rm -f "${payload}"
 
       - name: Login to GHCR
         uses: docker/login-action@v4

@@ -1,26 +1,31 @@
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from app.core.secrets import load_secrets_into_env
 
-import redis.asyncio as redis
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+# Secrets before settings/logging/database imports (same contract as kalke-auth).
+load_secrets_into_env()
 
-from app.api import demo as demo_api
-from app.api import health as health_api
-from app.api import legacy as legacy_api
-from app.api.exception_handlers import (
+from collections.abc import AsyncIterator  # noqa: E402
+from contextlib import asynccontextmanager  # noqa: E402
+
+import redis.asyncio as redis  # noqa: E402
+from fastapi import FastAPI  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+
+from app.api import demo as demo_api  # noqa: E402
+from app.api import health as health_api  # noqa: E402
+from app.api import legacy as legacy_api  # noqa: E402
+from app.api.exception_handlers import (  # noqa: E402
     handle_domain_error,
     handle_unhandled_exception,
     register_exception_handlers,
 )
-from app.auth.oidc import get_authenticator, oidc_enabled
-from app.core.config import get_settings
-from app.core.database import check_database_connection
-from app.core.idempotency import IdempotencyService, set_idempotency_service
-from app.core.logger import configure_logging, get_logger
-from app.core.middleware import RequestLoggingMiddleware
-from app.core.rate_limit import RateLimiter
-from app.middleware.idempotency_middleware import IdempotencyMiddleware
+from app.auth.oidc import get_authenticator, oidc_enabled  # noqa: E402
+from app.core.config import get_settings  # noqa: E402
+from app.core.database import check_database_connection  # noqa: E402
+from app.core.idempotency import IdempotencyService, set_idempotency_service  # noqa: E402
+from app.core.logger import configure_logging, get_logger  # noqa: E402
+from app.core.middleware import RequestLoggingMiddleware  # noqa: E402
+from app.core.rate_limit import RateLimiter  # noqa: E402
+from app.middleware.idempotency_middleware import IdempotencyMiddleware  # noqa: E402
 
 configure_logging()
 logger = get_logger(__name__)

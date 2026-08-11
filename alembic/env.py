@@ -7,8 +7,12 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
-from app.core.database import Base
-from app.models import (  # noqa: F401
+from app.core.secrets import load_secrets_into_env
+
+load_secrets_into_env()
+
+from app.core.database import Base  # noqa: E402
+from app.models import (  # noqa: E402, F401
     Account,
     Consent,
     DemoGrant,

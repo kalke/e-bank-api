@@ -13,7 +13,8 @@ def load_secrets_into_env(
 ) -> bool:
     """
     If SECRET_ID (or secret_id) is set, fetch a JSON secret and merge keys into
-    os.environ without overwriting values already present.
+    os.environ without overwriting non-empty values already present.
+    No-op when SECRET_ID is unset or KALKE_SECRETS_LOADED is set.
     Returns True when a secret was loaded.
     """
     if (os.getenv(_LOADED_FLAG) or "").strip():
@@ -57,12 +58,3 @@ def load_secrets_into_env(
             os.environ[k] = str(value)
     os.environ[_LOADED_FLAG] = "1"
     return True
-
-
-def apply_startup_secrets() -> None:
-    """Best-effort load; no-op when SECRET_ID unset (local/dev)."""
-    if not (os.getenv("SECRET_ID") or "").strip():
-        return
-    if (os.getenv(_LOADED_FLAG) or "").strip():
-        return
-    load_secrets_into_env()
