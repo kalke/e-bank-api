@@ -16,6 +16,7 @@ from app.errors import (
     TransferLimitExceeded,
 )
 from app.models.account import Account
+from app.models.holder import Holder
 from app.models.user import User
 from app.services.ledger import IdempotentReplay, LedgerService
 from app.services.recipient import RecipientResolver
@@ -29,6 +30,16 @@ class TransferService:
         self._ledger = LedgerService(session)
         self._resolver = RecipientResolver(session)
         self._settings = get_settings()
+
+    async def _holder_snapshot(self, owner_subject: str | None) -> dict:
+        if not owner_subject:
+            return {"holder_name": None, "holder_email": None}
+        holder = await self._session.get(Holder, owner_subject)
+        if holder is None:
+            return {"holder_name": None, "holder_email": None}
+        email = (holder.email or "").strip().lower() or None
+        name = (holder.full_name or "").strip() or None
+        return {"holder_name": name, "holder_email": email}
 
     async def require_onboarded_account(self, subject: str) -> Account:
         user = await self._session.get(User, subject)
@@ -152,6 +163,8 @@ class TransferService:
 
         await self._session.refresh(origin)
         await self._session.refresh(dest)
+        origin_holder = await self._holder_snapshot(origin.owner_subject)
+        dest_holder = await self._holder_snapshot(dest.owner_subject)
         logger.info(
             "transfer_completed",
             subject=subject,
@@ -159,15 +172,22 @@ class TransferService:
             destination=dest.display_number,
             amount=money.as_str(),
         )
+        memo_out = (memo or "").strip() or None
         return {
             "origin": {
                 "id": origin.id,
                 "display_number": origin.display_number,
                 "balance": Money(origin.balance_cached).as_str(),
+                "holder_name": origin_holder["holder_name"],
             },
             "destination": {
                 "id": dest.id,
                 "display_number": dest.display_number,
                 "balance": Money(dest.balance_cached).as_str(),
+                "holder_name": dest_holder["holder_name"],
+                "holder_email": dest_holder["holder_email"],
             },
+            "amount": money.as_str(),
+            "memo": memo_out,
+            "currency": self._settings.welcome_currency,
         }

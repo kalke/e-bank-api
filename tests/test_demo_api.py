@@ -212,7 +212,12 @@ def test_transfer_resolve_and_ledger(client: TestClient) -> None:
         },
     )
     assert transfer.status_code == 200, transfer.json()
-    assert transfer.json()["origin"]["balance"] == "9974.50"
+    body = transfer.json()
+    assert body["origin"]["balance"] == "9974.50"
+    assert body["amount"] == "25.50"
+    assert body["memo"] == "demo payment"
+    assert body["currency"] == "USD"
+    assert "holder_email" in body["destination"]
 
     replay = client.post(
         "/v1/me/transfer",
