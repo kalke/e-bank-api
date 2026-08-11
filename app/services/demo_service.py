@@ -31,6 +31,11 @@ from app.services.statement_present import (
     title_case_name,
     type_filter_match,
 )
+from app.services.statement_storage import (
+    get_or_create_pdf,
+    receipt_key,
+    statement_key,
+)
 from app.services.transfer import TransferService
 
 logger = get_logger(__name__)
@@ -221,7 +226,18 @@ class DemoBankService:
     ) -> tuple[bytes, str]:
         detail = await self.get_transaction(subject, public_id)
         parties = detail.pop("parties", {})
-        pdf = build_receipt_pdf(detail, parties=parties)
+        account_id = str(detail.get("account_id") or "")
+
+        def _generate() -> bytes:
+            return build_receipt_pdf(detail, parties=parties)
+
+        pdf = get_or_create_pdf(
+            key=receipt_key(account_id, public_id),
+            generate=_generate,
+            event_generated="bank.receipt.generated",
+            event_hit="bank.receipt.cache_hit",
+            extra={"tx_id": public_id, "account_id": account_id, "subject": subject},
+        )
         filename = f"receipt-{detail.get('type') or 'tx'}-{public_id}.pdf"
         return pdf, filename
 
@@ -292,15 +308,47 @@ class DemoBankService:
 
         if fmt == "csv":
             body = build_statement_csv(presented)
+            logger.info(
+                "bank.statement.exported",
+                outcome="ok",
+                format="csv",
+                account_id=account.id,
+                subject=subject,
+                rows=len(presented),
+            )
             return body, "text/csv; charset=utf-8", "statement.csv"
-        pdf = build_statement_pdf(
-            holder_name=holder_name,
-            account_display=display,
-            currency=account.currency,
-            period_label=period,
-            opening_balance=opening_s,
-            closing_balance=closing,
-            rows=presented,
+
+        filters = {
+            "from": date_from or "",
+            "to": date_to or "",
+            "type": tx_type or "",
+            "direction": direction or "",
+            "min_amount": min_amount or "",
+            "max_amount": max_amount or "",
+        }
+
+        def _generate() -> bytes:
+            return build_statement_pdf(
+                holder_name=holder_name,
+                account_display=display,
+                currency=account.currency,
+                period_label=period,
+                opening_balance=opening_s,
+                closing_balance=closing,
+                rows=presented,
+            )
+
+        pdf = get_or_create_pdf(
+            key=statement_key(account.id, filters),
+            generate=_generate,
+            event_generated="bank.statement.exported",
+            event_hit="bank.statement.cache_hit",
+            extra={
+                "account_id": account.id,
+                "subject": subject,
+                "format": "pdf",
+                "rows": len(presented),
+            },
         )
         return pdf, "application/pdf", "statement.pdf"
 

@@ -13,38 +13,44 @@ from app.domain.ids import new_uuid
 
 RequestCallNext = Callable[[Request], Awaitable[Response]]
 
+_SKIP_PATHS = frozenset({"/health", "/ready", "/metrics"})
+
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestCallNext) -> Response:
-        request_id = new_uuid()
+        incoming = (request.headers.get("x-request-id") or "").strip()
+        request_id = incoming or new_uuid()
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(request_id=request_id)
         request.state.request_id = request_id
 
-        logger = get_logger("http.request")
+        logger = get_logger("http")
         start = time.perf_counter()
 
         try:
             response = await call_next(request)
             duration_ms = round((time.perf_counter() - start) * 1000, 2)
-            self._log_response(
-                logger,
-                request.method,
-                request.url.path,
-                response.status_code,
-                duration_ms,
-                request_id,
-            )
+            if request.url.path not in _SKIP_PATHS:
+                self._log_response(
+                    logger,
+                    request.method,
+                    request.url.path,
+                    response.status_code,
+                    duration_ms,
+                    request_id,
+                )
             response.headers["X-Request-ID"] = request_id
             return response
         except Exception:
             duration_ms = round((time.perf_counter() - start) * 1000, 2)
             logger.error(
-                "request_failed",
+                "http.request",
                 method=request.method,
                 path=request.url.path,
                 duration_ms=duration_ms,
                 request_id=request_id,
+                outcome="error",
+                error_code="unhandled",
                 exc_info=True,
             )
             raise
@@ -60,17 +66,18 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         duration_ms: float,
         request_id: str,
     ) -> None:
+        outcome = "ok" if status_code < 400 else "error"
         payload = {
             "method": method,
             "path": path,
             "status_code": status_code,
             "duration_ms": duration_ms,
             "request_id": request_id,
+            "outcome": outcome,
         }
-
         if status_code >= 500:
-            logger.error("request_completed", **payload)
+            logger.error("http.request", **payload)
         elif status_code >= 400:
-            logger.warning("request_completed", **payload)
+            logger.warning("http.request", **payload)
         else:
-            logger.info("request_completed", **payload)
+            logger.info("http.request", **payload)

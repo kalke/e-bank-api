@@ -43,12 +43,13 @@ class TestRequestLoggingMiddleware:
 
         assert response.status_code == 200
         assert "X-Request-ID" in response.headers
-        completed = [e for e in logs if e.get("event") == "request_completed"]
+        completed = [e for e in logs if e.get("event") == "http.request"]
         assert len(completed) == 1
         assert completed[0]["log_level"] == "info"
         assert completed[0]["method"] == "GET"
         assert completed[0]["path"] == "/ok"
         assert completed[0]["status_code"] == 200
+        assert completed[0]["outcome"] == "ok"
         assert completed[0]["request_id"] == response.headers["X-Request-ID"]
 
     def test_logs_warning_for_client_error(self, logging_client: TestClient) -> None:
@@ -56,8 +57,9 @@ class TestRequestLoggingMiddleware:
             response = logging_client.get("/missing")
 
         assert response.status_code == 404
-        completed = [e for e in logs if e.get("event") == "request_completed"]
+        completed = [e for e in logs if e.get("event") == "http.request"]
         assert len(completed) == 1
         assert completed[0]["log_level"] == "warning"
         assert completed[0]["status_code"] == 404
+        assert completed[0]["outcome"] == "error"
         assert completed[0]["request_id"]

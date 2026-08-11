@@ -50,6 +50,11 @@ class Settings(BaseSettings):
         "No real money, no real bank account, no mandatory KYC."
     )
 
+    aws_region: str = "us-east-1"
+    secret_id: str = ""
+    s3_bank_pdf_bucket: str = ""
+    log_format: str = ""
+
     @property
     def is_production(self) -> bool:
         return self.env.lower() in {"production", "prod"}
@@ -75,6 +80,10 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
+    # Load once on first settings access (SECRET_ID unset → no-op for local/tests).
+    from app.core.secrets import apply_startup_secrets
+
+    apply_startup_secrets()
     return Settings()
 
 

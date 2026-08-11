@@ -11,6 +11,7 @@ from structlog.types import Processor
 SERVICE_NAME = os.getenv("SERVICE_NAME", "e-bank-api")
 ENVIRONMENT = os.getenv("ENV", "development").lower()
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+LOG_FORMAT = os.getenv("LOG_FORMAT", "").strip().lower()
 
 SENSITIVE_KEYS = frozenset(
     {
@@ -21,6 +22,8 @@ SENSITIVE_KEYS = frozenset(
         "card_number",
         "cpf",
         "cnpj",
+        "otp",
+        "code",
     }
 )
 
@@ -39,6 +42,12 @@ def sanitize_sensitive_fields(data: dict[str, Any]) -> dict[str, Any]:
     return sanitized
 
 
+def _use_json_logs() -> bool:
+    if LOG_FORMAT in {"json", "text"}:
+        return LOG_FORMAT == "json"
+    return ENVIRONMENT in {"production", "prod"}
+
+
 def _add_app_context(
     _logger: logging.Logger,
     _method_name: str,
@@ -54,7 +63,7 @@ def _pre_chain_processors() -> list[Processor]:
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_log_level,
         structlog.stdlib.add_logger_name,
-        structlog.processors.TimeStamper(fmt="iso", key="timestamp"),
+        structlog.processors.TimeStamper(fmt="iso", key="ts"),
         _add_app_context,
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
@@ -63,9 +72,9 @@ def _pre_chain_processors() -> list[Processor]:
 
 def configure_logging() -> None:
     level = getattr(logging, LOG_LEVEL, logging.INFO)
-
-    if ENVIRONMENT == "production":
-        renderer: Processor = structlog.processors.JSONRenderer()
+    renderer: Processor
+    if _use_json_logs():
+        renderer = structlog.processors.JSONRenderer()
     else:
         renderer = structlog.dev.ConsoleRenderer(colors=True)
 
