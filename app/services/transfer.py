@@ -12,6 +12,7 @@ from app.errors import (
     AccountNotFound,
     ForbiddenAccountAccess,
     OnboardingError,
+    SameAccountTransfer,
     TransferLimitExceeded,
 )
 from app.models.account import Account
@@ -121,7 +122,7 @@ class TransferService:
                 raise AccountNotFound(recipient.account_id)
 
         if dest.id == origin.id:
-            raise TransferLimitExceeded(money.as_str(), "0.00")
+            raise SameAccountTransfer()
 
         # Lock both rows in stable order
         ids = sorted([origin.id, dest.id])

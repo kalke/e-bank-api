@@ -245,6 +245,20 @@ def test_transfer_limit(client: TestClient) -> None:
     assert response.status_code == 400
 
 
+def test_transfer_same_account_rejected(client: TestClient) -> None:
+    account = _open_account(client)
+    response = client.post(
+        "/v1/me/transfer",
+        headers={"Idempotency-Key": "xfer-same"},
+        json={
+            "destination_account_id": account["id"],
+            "amount": "10.00",
+        },
+    )
+    assert response.status_code == 400
+    assert "same account" in response.json()["message"].lower()
+
+
 def test_withdraw(client: TestClient) -> None:
     _open_account(client)
     response = client.post(

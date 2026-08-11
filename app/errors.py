@@ -47,5 +47,14 @@ class TransferLimitExceeded(DomainError):
         super().__init__(f"Amount {amount} exceeds limit {limit}")
 
 
+class SameAccountTransfer(DomainError):
+    status_code = 400
+
+    def __init__(self) -> None:
+        super().__init__(
+            "cannot transfer to the same account; pick a different destination"
+        )
+
+
 class OnboardingError(DomainError):
     status_code = 400
