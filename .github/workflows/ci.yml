@@ -129,7 +129,8 @@ jobs:
             cd "${REPO_DIR}"
             git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/kalke/e-bank-api.git"
             git fetch --depth=1 origin main
-            git checkout -B main FETCH_HEAD
+            git reset --hard FETCH_HEAD
+            git clean -fd -e prod.env -e 'prod.env.*'
             git remote set-url origin "https://github.com/kalke/e-bank-api.git"
           else
             tmp=""
