@@ -40,6 +40,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     if settings.is_production and not oidc_enabled():
         raise RuntimeError("OIDC_ENABLED must be true when ENV=production")
+    if settings.is_production and settings.mount_legacy_challenge_routes:
+        raise RuntimeError(
+            "LEGACY_CHALLENGE_ROUTES cannot be enabled when ENV=production"
+        )
 
     await check_database_connection()
     logger.info("database_connected")
@@ -126,7 +130,7 @@ def create_app() -> FastAPI:
 
     application.include_router(health_api.router)
     application.include_router(demo_api.router)
-    if settings.legacy_challenge_routes:
+    if settings.mount_legacy_challenge_routes:
         application.include_router(legacy_api.router)
 
     register_exception_handlers(application)

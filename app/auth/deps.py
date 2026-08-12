@@ -70,4 +70,9 @@ async def require_authenticated_bank_write(
                 permissions=["bank:write"],
             )
         raise HTTPException(status_code=401, detail={"message": "unauthorized"})
+    if principal.is_m2m:
+        raise HTTPException(
+            status_code=403,
+            detail={"message": "end-user session required"},
+        )
     return principal

@@ -33,7 +33,8 @@ class Settings(BaseSettings):
 
     cors_origins: str = ""
     reset_enabled: str | None = None
-    legacy_challenge_routes: bool = True
+    # None = on in development, off in production. Explicit env always wins.
+    legacy_challenge_routes: bool | None = None
 
     rate_limit_enabled: bool = False
     rate_limit_requests: int = 60
@@ -63,6 +64,12 @@ class Settings(BaseSettings):
     def reset_allowed(self) -> bool:
         if self.reset_enabled is not None:
             return self.reset_enabled.lower() in {"1", "true", "yes", "on"}
+        return not self.is_production
+
+    @property
+    def mount_legacy_challenge_routes(self) -> bool:
+        if self.legacy_challenge_routes is not None:
+            return self.legacy_challenge_routes
         return not self.is_production
 
     @property

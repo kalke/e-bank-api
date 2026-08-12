@@ -9,6 +9,15 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from app.auth.oidc import (
+    HEADER_FORWARD_SECRET,
+    HEADER_USER_EMAIL,
+    HEADER_USER_SUB,
+    AuthError,
+    get_authenticator,
+    oidc_enabled,
+    resolve_effective_principal,
+)
 from app.core.exceptions import DuplicateRequestException, IdempotencyStorageException
 from app.core.idempotency import (
     IdempotencyRecord,
@@ -42,10 +51,25 @@ def extract_user_id(request: Request, payload: dict[str, Any]) -> str | None:
     principal = getattr(request.state, "principal", None)
     if principal is not None and getattr(principal, "subject", None):
         return str(principal.subject)
-    # Dev/test without auth middleware populating state: stable anonymous key
-    # for excluded/local flows. Do not use request body IDs (spoofable).
     _ = payload
-    return None
+    if not oidc_enabled() or get_authenticator() is None:
+        return None
+    header = request.headers.get("Authorization") or ""
+    token = header[7:].strip() if header.lower().startswith("bearer ") else ""
+    try:
+        resolved = resolve_effective_principal(
+            token,
+            {
+                HEADER_FORWARD_SECRET: request.headers.get(HEADER_FORWARD_SECRET) or "",
+                HEADER_USER_SUB: request.headers.get(HEADER_USER_SUB) or "",
+                HEADER_USER_EMAIL: request.headers.get(HEADER_USER_EMAIL) or "",
+            },
+        )
+    except AuthError:
+        return None
+    request.state.user_id = resolved.subject
+    request.state.principal = resolved
+    return resolved.subject
 
 
 def _parse_body(body: bytes) -> dict[str, Any]:

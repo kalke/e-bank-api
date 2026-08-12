@@ -180,3 +180,47 @@ class TestIdempotencyMiddleware:
         assert second.status_code == 201
         assert first.headers["X-Idempotency-Key"] != second.headers["X-Idempotency-Key"]
         assert idempotency_app.state.handler_calls["count"] == 2
+
+
+def test_extract_user_id_resolves_bearer_when_oidc_on() -> None:
+    from unittest.mock import patch
+
+    from starlette.requests import Request
+
+    from app.auth.oidc import Principal
+    from app.middleware.idempotency_middleware import extract_user_id
+
+    request = Request(
+        {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/v1/me/withdraw",
+            "raw_path": b"/v1/me/withdraw",
+            "query_string": b"",
+            "headers": [(b"authorization", b"Bearer tok")],
+            "client": ("127.0.0.1", 123),
+            "server": ("test", 80),
+        }
+    )
+    principal = Principal(subject="user-from-jwt", is_m2m=False)
+    with (
+        patch(
+            "app.middleware.idempotency_middleware.oidc_enabled",
+            return_value=True,
+        ),
+        patch(
+            "app.middleware.idempotency_middleware.get_authenticator",
+            return_value=object(),
+        ),
+        patch(
+            "app.middleware.idempotency_middleware.resolve_effective_principal",
+            return_value=principal,
+        ) as resolve,
+    ):
+        got = extract_user_id(request, {})
+    assert got == "user-from-jwt"
+    assert request.state.user_id == "user-from-jwt"
+    resolve.assert_called_once()
