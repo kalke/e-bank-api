@@ -64,7 +64,7 @@ def test_skip_then_complete_keeps_same_user_account(client: TestClient) -> None:
     mid = client.get("/v1/me/account")
     assert mid.status_code == 200, mid.json()
     assert mid.json()["id"] == account_id
-    assert mid.json()["onboarding_status"] == "incomplete"
+    assert mid.json()["onboarding_status"] == "in_progress"
     listed = client.get("/v1/me/accounts")
     assert listed.status_code == 200
     assert any(row["id"] == account_id for row in listed.json()["accounts"])
