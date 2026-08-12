@@ -88,31 +88,38 @@ class DemoBankService:
         raise OnboardingError("use onboarding complete or skip to open an account")
 
     async def get_my_account(self, subject: str) -> DemoAccountView:
+        """Return the primary checking account even while onboarding is incomplete.
+
+        Money-moving ops stay gated; listing/reading accounts must not hide
+        existing rows when the user restarts KYC (`in_progress`).
+        """
         user = await self._users.get(subject)
-        if user is None or user.onboarding_status not in {"completed", "skipped"}:
-            raise OnboardingError("complete onboarding before using the bank")
         account = await self._accounts.get_by_owner_kind(subject, "checking")
         if account is None:
             raise AccountNotFound("checking")
         holder = await self._session.get(Holder, subject)
+        status = user.onboarding_status if user else "not_started"
         return self._view(
             account,
-            user.onboarding_status,
-            demo_credited=user.demo_credited_at is not None,
+            status,
+            demo_credited=user.demo_credited_at is not None if user else False,
             holder_name=holder.full_name if holder else None,
         )
 
     async def list_accounts(self, subject: str) -> list[DemoAccountView]:
+        """List owned checking accounts regardless of onboarding gate."""
         user = await self._users.get(subject)
-        if user is None or user.onboarding_status not in {"completed", "skipped"}:
-            return []
         rows = await self._accounts.list_by_owner_kind(subject, "checking")
+        if not rows:
+            return []
         holder = await self._session.get(Holder, subject)
+        status = user.onboarding_status if user else "not_started"
+        credited = user.demo_credited_at is not None if user else False
         return [
             self._view(
                 row,
-                user.onboarding_status,
-                demo_credited=user.demo_credited_at is not None,
+                status,
+                demo_credited=credited,
                 holder_name=holder.full_name if holder else None,
             )
             for row in rows
@@ -158,16 +165,16 @@ class DemoBankService:
         display: str,
     ) -> DemoAccountView:
         user = await self._users.get(subject)
-        if user is None or user.onboarding_status not in {"completed", "skipped"}:
-            raise OnboardingError("complete onboarding before using the bank")
         rows = await self._accounts.list_by_owner_kind(subject, "checking")
         holder = await self._session.get(Holder, subject)
+        status = user.onboarding_status if user else "not_started"
+        credited = user.demo_credited_at is not None if user else False
         for row in rows:
             if row.display_number == display or row.id == display:
                 return self._view(
                     row,
-                    user.onboarding_status,
-                    demo_credited=user.demo_credited_at is not None,
+                    status,
+                    demo_credited=credited,
                     holder_name=holder.full_name if holder else None,
                 )
         raise ForbiddenAccountAccess(display)
@@ -573,6 +580,13 @@ class DemoBankService:
         return "all available"
 
     @staticmethod
+    def _wire_onboarding_status(status: str) -> str:
+        """Surface mid-KYC as incomplete so clients can list + deep-link to wizard."""
+        if status in {"completed", "skipped"}:
+            return status
+        return "incomplete"
+
+    @staticmethod
     def _view(
         account: AccountRecord,
         onboarding_status: str,
@@ -586,7 +600,7 @@ class DemoBankService:
             currency=account.currency,
             kind=account.kind,
             status=account.status,
-            onboarding_status=onboarding_status,
+            onboarding_status=DemoBankService._wire_onboarding_status(onboarding_status),
             demo_credited=demo_credited,
             account_number=account.account_number,
             digit=account.digit,

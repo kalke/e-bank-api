@@ -193,7 +193,9 @@ def _open(client: TestClient) -> dict:
 
 
 def test_money_gated_until_onboarding(client: TestClient) -> None:
-    assert client.get("/v1/me/account").status_code == 400
+    # No account yet → not found (listing is ungated; money ops stay blocked).
+    assert client.get("/v1/me/account").status_code == 404
+    assert client.get("/v1/me/accounts").json()["accounts"] == []
     assert (
         client.post(
             "/v1/me/transfer",
