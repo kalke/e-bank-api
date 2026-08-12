@@ -96,17 +96,30 @@ class OnboardingRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def latest_session(self, subject: str) -> OnboardingSession | None:
+    async def latest_session(
+        self,
+        subject: str,
+        account_id: str | None = None,
+    ) -> OnboardingSession | None:
+        stmt = select(OnboardingSession).where(OnboardingSession.subject == subject)
+        if account_id:
+            stmt = stmt.where(OnboardingSession.account_id == account_id)
         result = await self._session.execute(
-            select(OnboardingSession)
-            .where(OnboardingSession.subject == subject)
-            .order_by(OnboardingSession.created_at.desc())
-            .limit(1),
+            stmt.order_by(OnboardingSession.created_at.desc()).limit(1),
         )
         return result.scalar_one_or_none()
 
-    async def create_session(self, subject: str) -> OnboardingSession:
-        session = OnboardingSession(id=new_uuid(), subject=subject, status="draft")
+    async def create_session(
+        self,
+        subject: str,
+        account_id: str | None = None,
+    ) -> OnboardingSession:
+        session = OnboardingSession(
+            id=new_uuid(),
+            subject=subject,
+            account_id=account_id,
+            status="draft",
+        )
         self._session.add(session)
         await self._session.flush()
         return session

@@ -17,8 +17,8 @@ from app.errors import (
 )
 from app.models.account import Account
 from app.models.holder import Holder
-from app.models.user import User
 from app.services.ledger import IdempotentReplay, LedgerService
+from app.services.onboarding_accounts import READY_STATUSES, require_ready
 from app.services.recipient import RecipientResolver
 
 logger = get_logger(__name__)
@@ -42,21 +42,19 @@ class TransferService:
         return {"holder_name": name, "holder_email": email}
 
     async def require_onboarded_account(self, subject: str) -> Account:
-        user = await self._session.get(User, subject)
-        if user is None or user.onboarding_status not in {"completed", "skipped"}:
-            raise OnboardingError("complete onboarding before using the bank")
         result = await self._session.execute(
             select(Account)
             .where(
                 Account.owner_subject == subject,
                 Account.kind == "checking",
+                Account.onboarding_status.in_(tuple(READY_STATUSES)),
             )
             .order_by(Account.created_at.asc(), Account.id.asc())
             .limit(1)
         )
         account = result.scalar_one_or_none()
         if account is None:
-            raise AccountNotFound("checking")
+            raise OnboardingError("complete onboarding before using the bank")
         if account.status != "active":
             raise ForbiddenAccountAccess(account.id)
         return account
@@ -66,14 +64,12 @@ class TransferService:
         subject: str,
         account_id: str,
     ) -> Account:
-        user = await self._session.get(User, subject)
-        if user is None or user.onboarding_status not in {"completed", "skipped"}:
-            raise OnboardingError("complete onboarding before using the bank")
         account = await self._session.get(Account, account_id)
         if account is None or account.owner_subject != subject:
             raise ForbiddenAccountAccess(account_id)
         if account.status != "active":
             raise ForbiddenAccountAccess(account_id)
+        require_ready(account)
         return account
 
     async def resolve(
@@ -134,6 +130,8 @@ class TransferService:
 
         if dest.id == origin.id:
             raise SameAccountTransfer()
+        if dest.owner_subject == subject:
+            require_ready(dest)
 
         # Lock both rows in stable order
         ids = sorted([origin.id, dest.id])

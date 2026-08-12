@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -16,13 +17,10 @@ from app.errors import (
 )
 from app.models.account import Account
 from app.models.holder import Holder
+from app.models.transaction import Transaction
 from app.repositories.account_repository import AccountRecord, AccountRepository
-from app.repositories.user_repository import (
-    DemoGrantRepository,
-    OnboardingRepository,
-    UserRepository,
-)
 from app.services.ledger import LedgerService
+from app.services.onboarding_accounts import READY_STATUSES
 from app.services.statement_export import EXPORT_MAX_ROWS, build_statement_csv
 from app.services.statement_pdf import build_receipt_pdf, build_statement_pdf
 from app.services.statement_present import (
@@ -56,9 +54,6 @@ class DemoBankService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
         self._accounts = AccountRepository(session)
-        self._users = UserRepository(session)
-        self._grants = DemoGrantRepository(session)
-        self._onboarding = OnboardingRepository(session)
         self._settings = get_settings()
         self._transfers = TransferService(session)
         self._ledger = LedgerService(session)
@@ -73,17 +68,8 @@ class DemoBankService:
     ) -> DemoAccountView:
         """Deprecated free bootstrap — account opens via onboarding complete/skip."""
         _ = email, display_name, request_id
-        user = await self._users.get(subject)
         account = await self._accounts.get_by_owner_kind(subject, "checking")
-        if (
-            account is not None
-            and user
-            and user.onboarding_status
-            in {
-                "completed",
-                "skipped",
-            }
-        ):
+        if account is not None and account.onboarding_status in READY_STATUSES:
             return await self.get_my_account(subject)
         raise OnboardingError("use onboarding complete or skip to open an account")
 
@@ -96,29 +82,15 @@ class DemoBankService:
         account = await self._accounts.get_by_owner_kind(subject, "checking")
         if account is None:
             raise AccountNotFound("checking")
-        status, credited, holder_name = await self._account_view_context(subject)
-        return self._view(
-            account,
-            status,
-            demo_credited=credited,
-            holder_name=holder_name,
-        )
+        views = await self._views_for(subject, [account])
+        return views[0]
 
     async def list_accounts(self, subject: str) -> list[DemoAccountView]:
         """List owned checking accounts regardless of onboarding gate."""
         rows = await self._accounts.list_by_owner_kind(subject, "checking")
         if not rows:
             return []
-        status, credited, holder_name = await self._account_view_context(subject)
-        return [
-            self._view(
-                row,
-                status,
-                demo_credited=credited,
-                holder_name=holder_name,
-            )
-            for row in rows
-        ]
+        return await self._views_for(subject, rows)
 
     async def open_additional_account(
         self,
@@ -129,29 +101,24 @@ class DemoBankService:
         user_agent: str | None = None,
         idempotency_key: str | None = None,
     ) -> DemoAccountView:
-        """Open another checking account for the same holder/CPF (demo transfers)."""
-        user = await self._users.get(subject)
-        if user is None or user.onboarding_status not in {"completed", "skipped"}:
+        """Open a draft checking account for the same holder."""
+        _ = request_id, source_ip, user_agent, idempotency_key
+        rows = await self._accounts.list_by_owner_kind(subject, "checking")
+        if not any(row.onboarding_status in READY_STATUSES for row in rows):
             raise OnboardingError("complete onboarding before using the bank")
         holder = await self._session.get(Holder, subject)
         if holder is None:
             raise OnboardingError("complete onboarding before using the bank")
 
         limit = int(self._settings.max_checking_accounts_per_user)
-        count = await self._accounts.count_by_owner_kind(subject, "checking")
-        if count >= limit:
+        if len(rows) >= limit:
             raise OnboardingError(f"account limit reached ({limit})")
 
         from app.services.onboarding_complete import OnboardingCompletionService
 
-        return await OnboardingCompletionService(self._session).open_extra_checking(
+        return await OnboardingCompletionService(self._session).open_extra_draft(
             subject,
             holder_name=holder.full_name,
-            onboarding_status=user.onboarding_status,
-            request_id=request_id,
-            source_ip=source_ip,
-            user_agent=user_agent,
-            idempotency_key=idempotency_key,
         )
 
     async def get_account_by_display(
@@ -160,28 +127,40 @@ class DemoBankService:
         display: str,
     ) -> DemoAccountView:
         rows = await self._accounts.list_by_owner_kind(subject, "checking")
-        status, credited, holder_name = await self._account_view_context(subject)
-        for row in rows:
-            if row.display_number == display or row.id == display:
-                return self._view(
-                    row,
-                    status,
-                    demo_credited=credited,
-                    holder_name=holder_name,
-                )
+        views = await self._views_for(subject, rows)
+        for view in views:
+            if view.display_number == display or view.id == display:
+                return view
         raise ForbiddenAccountAccess(display)
 
-    async def _account_view_context(
+    async def _views_for(
         self,
         subject: str,
-    ) -> tuple[str, bool, str | None]:
-        """Shared user/holder fields for account read DTOs (canonical statuses)."""
-        user = await self._users.get(subject)
+        rows: list[AccountRecord],
+    ) -> list[DemoAccountView]:
         holder = await self._session.get(Holder, subject)
-        status = user.onboarding_status if user else "not_started"
-        credited = user.demo_credited_at is not None if user else False
         holder_name = holder.full_name if holder else None
-        return status, credited, holder_name
+        credited_ids = await self._welcome_account_ids([row.id for row in rows])
+        return [
+            self._view(
+                row,
+                row.onboarding_status,
+                demo_credited=row.id in credited_ids,
+                holder_name=holder_name,
+            )
+            for row in rows
+        ]
+
+    async def _welcome_account_ids(self, account_ids: list[str]) -> set[str]:
+        if not account_ids:
+            return set()
+        result = await self._session.execute(
+            select(Transaction.account_id).where(
+                Transaction.account_id.in_(account_ids),
+                Transaction.type == "demo_grant",
+            )
+        )
+        return set(result.scalars().all())
 
     async def list_transactions(
         self,
@@ -432,24 +411,34 @@ class DemoBankService:
         self,
         subject: str,
         account_id: str,
+        *,
+        require_ready: bool = False,
     ) -> AccountRecord:
-        user = await self._users.get(subject)
-        if user is None or user.onboarding_status not in {"completed", "skipped"}:
-            raise OnboardingError("complete onboarding before using the bank")
         account = await self._accounts.get(account_id)
         if account is None or account.kind != "checking":
             raise AccountNotFound(account_id)
         if account.owner_subject != subject:
             raise ForbiddenAccountAccess(account_id)
+        if require_ready and account.onboarding_status not in READY_STATUSES:
+            raise OnboardingError("complete onboarding before using the bank")
         return account
 
-    async def _require_owned_checking(self, subject: str) -> AccountRecord:
-        user = await self._users.get(subject)
-        if user is None or user.onboarding_status not in {"completed", "skipped"}:
-            raise OnboardingError("complete onboarding before using the bank")
-        account = await self._accounts.get_by_owner_kind(subject, "checking")
-        if account is None:
+    async def _require_owned_checking(
+        self,
+        subject: str,
+        *,
+        require_ready: bool = False,
+    ) -> AccountRecord:
+        rows = await self._accounts.list_by_owner_kind(subject, "checking")
+        if not rows:
             raise AccountNotFound("checking")
+        if require_ready:
+            ready = [row for row in rows if row.onboarding_status in READY_STATUSES]
+            if not ready:
+                raise OnboardingError("complete onboarding before using the bank")
+            account = ready[0]
+        else:
+            account = rows[0]
         if account.owner_subject != subject:
             raise ForbiddenAccountAccess(account.id)
         return account

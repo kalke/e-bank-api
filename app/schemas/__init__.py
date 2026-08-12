@@ -93,9 +93,11 @@ class OnboardingDocumentIn(BaseModel):
     doc_type: Literal["identity_document", "address_proof"]
     pde_extraction_id: str | None = Field(default=None, max_length=128)
     summary: dict[str, Any] | None = None
+    account_id: str | None = Field(default=None, max_length=64)
 
 
 class OnboardingCompleteIn(BaseModel):
+    account_id: str | None = Field(default=None, max_length=64)
     full_name: str = Field(min_length=2, max_length=256)
     birth_date: date
     document_number: str = Field(min_length=11, max_length=18)

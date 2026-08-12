@@ -24,6 +24,12 @@ class OnboardingSession(Base):
         nullable=False,
         index=True,
     )
+    account_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("accounts.id"),
+        nullable=True,
+        index=True,
+    )
     status: Mapped[str] = mapped_column(
         String(32),
         nullable=False,

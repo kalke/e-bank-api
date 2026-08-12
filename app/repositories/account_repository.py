@@ -19,6 +19,7 @@ class AccountRecord:
     overdraft_limit: Decimal = Decimal("0")
     account_number: int | None = None
     digit: int | None = None
+    onboarding_status: str = "not_started"
 
     @property
     def display_number(self) -> str | None:
@@ -397,4 +398,6 @@ class AccountRepository:
             overdraft_limit=Decimal(str(account.overdraft_limit or 0)),
             account_number=account.account_number,
             digit=account.digit,
+            onboarding_status=getattr(account, "onboarding_status", None)
+            or "not_started",
         )

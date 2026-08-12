@@ -30,6 +30,12 @@ class Account(Base):
     kind: Mapped[str] = mapped_column(String(32), nullable=False, default="checking")
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    onboarding_status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="not_started",
+        server_default="not_started",
+    )
     account_number: Mapped[int | None] = mapped_column(
         BigInteger,
         nullable=True,

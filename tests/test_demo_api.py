@@ -59,8 +59,8 @@ def test_skip_then_complete_keeps_same_user_account(client: TestClient) -> None:
     skipped = _open_account(client)
     account_id = skipped["id"]
 
-    # Wizard restart sets in_progress; existing accounts stay listable.
-    client.post("/v1/onboarding/start")
+    # Wizard restart on this account sets in_progress; other accounts stay as-is.
+    client.post(f"/v1/onboarding/start?account_id={account_id}")
     mid = client.get("/v1/me/account")
     assert mid.status_code == 200, mid.json()
     assert mid.json()["id"] == account_id
@@ -124,12 +124,53 @@ def test_additional_checking_accounts_same_cpf(client: TestClient) -> None:
         headers={"Idempotency-Key": "extra-acct-1"},
     )
     assert second.status_code == 200, second.json()
-    assert second.json()["id"] != first_body["id"]
-    assert second.json()["display_number"] != first_body["display_number"]
-    assert second.json()["balance"] == "10000.00"
+    second_body = second.json()
+    assert second_body["id"] != first_body["id"]
+    assert second_body["display_number"] != first_body["display_number"]
+    assert second_body["onboarding_status"] == "in_progress"
+    assert second_body["balance"] == "0.00"
+    assert second_body["holder_name"] == "Maria Silva"
 
     listed = client.get("/v1/me/accounts")
-    assert len(listed.json()["accounts"]) == 2
+    by_id = {row["id"]: row for row in listed.json()["accounts"]}
+    assert len(by_id) == 2
+    assert by_id[first_body["id"]]["onboarding_status"] == "completed"
+    assert by_id[second_body["id"]]["onboarding_status"] == "in_progress"
+
+    # Starting KYC on the extra account must not mark the first incomplete.
+    started = client.post(
+        f"/v1/onboarding/start?account_id={second_body['id']}",
+    )
+    assert started.status_code == 200, started.json()
+    listed = client.get("/v1/me/accounts")
+    by_id = {row["id"]: row for row in listed.json()["accounts"]}
+    assert by_id[first_body["id"]]["onboarding_status"] == "completed"
+    assert by_id[second_body["id"]]["onboarding_status"] == "in_progress"
+
+    blocked = client.post(
+        "/v1/me/transfer",
+        headers={"Idempotency-Key": "xfer-multi-blocked"},
+        json={
+            "source_account_id": first_body["id"],
+            "destination_account": second_body["display_number"],
+            "amount": "25.00",
+        },
+    )
+    assert blocked.status_code == 400
+
+    skipped = client.post(
+        f"/v1/onboarding/skip?account_id={second_body['id']}",
+        headers={"Idempotency-Key": "extra-skip-1"},
+    )
+    assert skipped.status_code == 200, skipped.json()
+    assert skipped.json()["id"] == second_body["id"]
+    assert skipped.json()["onboarding_status"] == "skipped"
+    assert skipped.json()["balance"] == "10000.00"
+
+    listed = client.get("/v1/me/accounts")
+    by_id = {row["id"]: row for row in listed.json()["accounts"]}
+    assert by_id[first_body["id"]]["onboarding_status"] == "completed"
+    assert by_id[second_body["id"]]["onboarding_status"] == "skipped"
 
     # Transfer between own accounts (same CPF holder) by account number.
     xfer = client.post(
@@ -137,7 +178,7 @@ def test_additional_checking_accounts_same_cpf(client: TestClient) -> None:
         headers={"Idempotency-Key": "xfer-multi-1"},
         json={
             "source_account_id": first_body["id"],
-            "destination_account": second.json()["display_number"],
+            "destination_account": second_body["display_number"],
             "amount": "25.00",
         },
     )

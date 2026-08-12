@@ -351,18 +351,26 @@ async def cep_lookup(
 
 @router.get("/onboarding")
 async def onboarding_status(
+    account_id: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     principal: Principal = Depends(require_authenticated_bank_write),
 ) -> dict:
-    return await OnboardingService(db).get_status(principal.subject)
+    return await OnboardingService(db).get_status(
+        principal.subject,
+        account_id=account_id,
+    )
 
 
 @router.post("/onboarding/start")
 async def onboarding_start(
+    account_id: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     principal: Principal = Depends(require_authenticated_bank_write),
 ) -> dict:
-    return await OnboardingService(db).start(principal.subject)
+    return await OnboardingService(db).start(
+        principal.subject,
+        account_id=account_id,
+    )
 
 
 @router.post("/onboarding/consent")
@@ -380,6 +388,7 @@ async def onboarding_skip(
     db: AsyncSession = Depends(get_db),
     principal: Principal = Depends(require_authenticated_bank_write),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    account_id: str | None = Query(default=None),
 ) -> DemoAccountOut:
     await _enforce_rate_limit(request, principal)
     ip, ua = _client_meta(request)
@@ -390,6 +399,7 @@ async def onboarding_skip(
         source_ip=ip,
         user_agent=ua,
         idempotency_key=idempotency_key,
+        account_id=account_id,
     )
     return _demo_account_out(view)
 
@@ -397,6 +407,7 @@ async def onboarding_skip(
 @router.post("/onboarding/documents")
 async def onboarding_documents(
     body: OnboardingDocumentIn,
+    account_id: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     principal: Principal = Depends(require_authenticated_bank_write),
 ) -> dict:
@@ -405,6 +416,7 @@ async def onboarding_documents(
         doc_type=body.doc_type,
         pde_extraction_id=body.pde_extraction_id,
         summary=body.summary,
+        account_id=body.account_id or account_id,
     )
 
 
@@ -415,6 +427,7 @@ async def onboarding_complete(
     db: AsyncSession = Depends(get_db),
     principal: Principal = Depends(require_authenticated_bank_write),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    account_id: str | None = Query(default=None),
 ) -> DemoAccountOut:
     await _enforce_rate_limit(request, principal)
     ip, ua = _client_meta(request)
@@ -426,5 +439,6 @@ async def onboarding_complete(
         source_ip=ip,
         user_agent=ua,
         idempotency_key=idempotency_key,
+        account_id=body.account_id or account_id,
     )
     return _demo_account_out(view)

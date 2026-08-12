@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.logger import get_logger
-from app.domain.ids import new_uuid
 from app.domain.money import Money
 from app.domain.validation import (
     require_adult,
@@ -23,14 +22,14 @@ from app.domain.validation import (
 from app.errors import OnboardingError
 from app.models.account import Account
 from app.models.holder import Holder
-from app.repositories.user_repository import (
-    DemoGrantRepository,
-    OnboardingRepository,
-    UserRepository,
-)
-from app.services.account_number import AccountNumberGenerator
+from app.models.transaction import Transaction
+from app.repositories.user_repository import OnboardingRepository, UserRepository
 from app.services.demo_service import DemoAccountView
 from app.services.ledger import LedgerService
+from app.services.onboarding_accounts import (
+    create_draft_checking,
+    resolve_onboarding_account,
+)
 from app.services.onboarding_service import DD_SKIP_POLICY, TOS_POLICY
 
 logger = get_logger(__name__)
@@ -41,8 +40,6 @@ class OnboardingCompletionService:
         self._session = session
         self._users = UserRepository(session)
         self._onboarding = OnboardingRepository(session)
-        self._grants = DemoGrantRepository(session)
-        self._numbers = AccountNumberGenerator(session)
         self._ledger = LedgerService(session)
         self._settings = get_settings()
 
@@ -56,18 +53,27 @@ class OnboardingCompletionService:
         source_ip: str | None = None,
         user_agent: str | None = None,
         idempotency_key: str | None = None,
+        account_id: str | None = None,
     ) -> DemoAccountView:
         await self._users.upsert(subject, email=email)
-        session = await self._onboarding.latest_session(subject)
+        account = await resolve_onboarding_account(
+            self._session,
+            subject,
+            account_id or payload.get("account_id"),
+            create_if_missing=True,
+            allow_single_ready=True,
+        )
+        session = await self._onboarding.latest_session(subject, account.id)
         if session is None:
-            await self._onboarding.create_session(subject)
+            await self._onboarding.create_session(subject, account.id)
 
         holder_data = self._validate_full(payload)
         await self._onboarding.record_consent(subject, TOS_POLICY)
         logger.info("tos_accepted", subject=subject)
 
-        return await self._create_holder_and_account(
+        return await self._finish_account(
             subject,
+            account,
             holder_data,
             onboarding_status="completed",
             session_status="approved_demo",
@@ -87,32 +93,46 @@ class OnboardingCompletionService:
         source_ip: str | None = None,
         user_agent: str | None = None,
         idempotency_key: str | None = None,
+        account_id: str | None = None,
     ) -> DemoAccountView:
         await self._users.upsert(subject, email=email, display_name=display_name)
         await self._onboarding.record_consent(subject, DD_SKIP_POLICY)
         await self._onboarding.record_consent(subject, TOS_POLICY)
-        session = await self._onboarding.latest_session(subject)
-        if session is None:
-            await self._onboarding.create_session(subject)
-
-        name = display_name or (email.split("@")[0] if email else "Demo User")
-        holder_data = {
-            "full_name": name,
-            "birth_date": None,
-            "document_type": None,
-            "document_number": None,
-            "cep": None,
-            "street": None,
-            "number": None,
-            "complement": None,
-            "neighborhood": None,
-            "city": None,
-            "state": None,
-            "email": email,
-            "phone": None,
-        }
-        return await self._create_holder_and_account(
+        account = await resolve_onboarding_account(
+            self._session,
             subject,
+            account_id,
+            create_if_missing=True,
+            allow_single_ready=True,
+        )
+        session = await self._onboarding.latest_session(subject, account.id)
+        if session is None:
+            await self._onboarding.create_session(subject, account.id)
+
+        holder = await self._session.get(Holder, subject)
+        if holder is None:
+            name = display_name or (email.split("@")[0] if email else "Demo User")
+            holder_data = {
+                "full_name": name,
+                "birth_date": None,
+                "document_type": None,
+                "document_number": None,
+                "cep": None,
+                "street": None,
+                "number": None,
+                "complement": None,
+                "neighborhood": None,
+                "city": None,
+                "state": None,
+                "email": email,
+                "phone": None,
+            }
+        else:
+            holder_data = None
+
+        return await self._finish_account(
+            subject,
+            account,
             holder_data,
             onboarding_status="skipped",
             session_status="skipped",
@@ -122,148 +142,14 @@ class OnboardingCompletionService:
             idempotency_key=idempotency_key,
         )
 
-    async def _create_holder_and_account(
-        self,
-        subject: str,
-        holder_data: dict[str, Any],
-        *,
-        onboarding_status: str,
-        session_status: str,
-        request_id: str | None,
-        source_ip: str | None,
-        user_agent: str | None,
-        idempotency_key: str | None,
-    ) -> DemoAccountView:
-        existing = await self._session.execute(
-            select(Account)
-            .where(
-                Account.owner_subject == subject,
-                Account.kind == "checking",
-            )
-            .order_by(Account.created_at.asc(), Account.id.asc())
-            .limit(1)
-        )
-        account = existing.scalar_one_or_none()
-        created = account is None
-
-        holder = await self._session.get(Holder, subject)
-        if holder is None:
-            holder = Holder(subject=subject, full_name=holder_data["full_name"])
-            self._session.add(holder)
-        for key, value in holder_data.items():
-            setattr(holder, key, value)
-        await self._session.flush()
-
-        if account is None:
-            identity = await self._numbers.next_identity()
-            account = Account(
-                id=new_uuid(),
-                owner_subject=subject,
-                kind="checking",
-                currency=self._settings.welcome_currency,
-                status="active",
-                account_number=identity.account_number,
-                digit=identity.digit,
-                balance_cached=Decimal("0"),
-                overdraft_limit=Decimal("0"),
-            )
-            self._session.add(account)
-            await self._session.flush()
-        elif account.account_number is None or account.digit is None:
-            # Legacy / partial rows — keep the same user-owned account id.
-            identity = await self._numbers.next_identity()
-            account.account_number = identity.account_number
-            account.digit = identity.digit
-            await self._session.flush()
-
-        welcome = Money(self._settings.welcome_amount)
-        grant = await self._grants.get(subject)
-        if grant is None:
-            await self._ledger.welcome_grant(
-                account,
-                welcome.amount,
-                actor_subject=subject,
-                request_id=request_id,
-                idempotency_key=idempotency_key or f"welcome:{subject}",
-                source_ip=source_ip,
-                user_agent=user_agent,
-            )
-            await self._grants.create(
-                subject,
-                welcome.amount,
-                self._settings.welcome_currency,
-            )
-            await self._users.mark_demo_credited(subject)
-            demo_credited = True
-        else:
-            user = await self._users.get(subject)
-            demo_credited = bool(user and user.demo_credited_at is not None)
-            if not demo_credited:
-                await self._users.mark_demo_credited(subject)
-                demo_credited = True
-
-        session = await self._onboarding.latest_session(subject)
-        if session is not None:
-            session.status = session_status
-            now = datetime.now(UTC)
-            if session_status == "skipped":
-                session.skipped_at = now
-            else:
-                session.completed_at = now
-        # Always bind completion to the Keycloak user subject, not the browser session.
-        await self._users.set_onboarding_status(subject, onboarding_status)
-        await self._session.refresh(account)
-
-        logger.info(
-            "account_opened" if created else "account_upgraded",
-            subject=subject,
-            account_display=account.display_number,
-            status=onboarding_status,
-        )
-        return self._view(
-            account,
-            onboarding_status,
-            demo_credited=demo_credited,
-            holder_name=holder.full_name,
-        )
-
-    async def open_extra_checking(
+    async def open_extra_draft(
         self,
         subject: str,
         *,
         holder_name: str,
-        onboarding_status: str,
-        request_id: str | None,
-        source_ip: str | None,
-        user_agent: str | None,
-        idempotency_key: str | None,
     ) -> DemoAccountView:
-        identity = await self._numbers.next_identity()
-        account = Account(
-            id=new_uuid(),
-            owner_subject=subject,
-            kind="checking",
-            currency=self._settings.welcome_currency,
-            status="active",
-            account_number=identity.account_number,
-            digit=identity.digit,
-            balance_cached=Decimal("0"),
-            overdraft_limit=Decimal("0"),
-        )
-        self._session.add(account)
-        await self._session.flush()
-
-        welcome = Money(self._settings.welcome_amount)
-        key = idempotency_key or f"welcome-extra:{subject}:{account.id}"
-        await self._ledger.welcome_grant(
-            account,
-            welcome.amount,
-            actor_subject=subject,
-            request_id=request_id,
-            idempotency_key=key,
-            source_ip=source_ip,
-            user_agent=user_agent,
-        )
+        account = await create_draft_checking(self._session, subject)
+        await self._onboarding.create_session(subject, account.id)
         await self._session.refresh(account)
         logger.info(
             "extra_account_opened",
@@ -272,10 +158,118 @@ class OnboardingCompletionService:
         )
         return self._view(
             account,
-            onboarding_status,
-            demo_credited=True,
+            "in_progress",
+            demo_credited=False,
             holder_name=holder_name,
         )
+
+    async def _finish_account(
+        self,
+        subject: str,
+        account: Account,
+        holder_data: dict[str, Any] | None,
+        *,
+        onboarding_status: str,
+        session_status: str,
+        request_id: str | None,
+        source_ip: str | None,
+        user_agent: str | None,
+        idempotency_key: str | None,
+    ) -> DemoAccountView:
+        holder = await self._upsert_holder(subject, holder_data)
+        if account.account_number is None or account.digit is None:
+            from app.services.account_number import AccountNumberGenerator
+
+            identity = await AccountNumberGenerator(self._session).next_identity()
+            account.account_number = identity.account_number
+            account.digit = identity.digit
+            await self._session.flush()
+
+        demo_credited = await self._ensure_welcome(
+            account,
+            subject,
+            request_id=request_id,
+            source_ip=source_ip,
+            user_agent=user_agent,
+            idempotency_key=idempotency_key,
+        )
+
+        session = await self._onboarding.latest_session(subject, account.id)
+        if session is not None:
+            session.status = session_status
+            now = datetime.now(UTC)
+            if session_status == "skipped":
+                session.skipped_at = now
+            else:
+                session.completed_at = now
+        account.onboarding_status = onboarding_status
+        await self._session.flush()
+        await self._session.refresh(account)
+
+        logger.info(
+            "account_opened",
+            subject=subject,
+            account_id=account.id,
+            account_display=account.display_number,
+            status=onboarding_status,
+        )
+        return self._view(
+            account,
+            onboarding_status,
+            demo_credited=demo_credited,
+            holder_name=holder.full_name if holder else None,
+        )
+
+    async def _upsert_holder(
+        self,
+        subject: str,
+        holder_data: dict[str, Any] | None,
+    ) -> Holder | None:
+        holder = await self._session.get(Holder, subject)
+        if holder_data is None:
+            return holder
+        if holder is None:
+            holder = Holder(subject=subject, full_name=holder_data["full_name"])
+            self._session.add(holder)
+        for key, value in holder_data.items():
+            setattr(holder, key, value)
+        await self._session.flush()
+        return holder
+
+    async def _ensure_welcome(
+        self,
+        account: Account,
+        subject: str,
+        *,
+        request_id: str | None,
+        source_ip: str | None,
+        user_agent: str | None,
+        idempotency_key: str | None,
+    ) -> bool:
+        existing = await self._session.execute(
+            select(Transaction.id)
+            .where(
+                Transaction.account_id == account.id,
+                Transaction.type == "demo_grant",
+            )
+            .limit(1)
+        )
+        if existing.scalar_one_or_none() is not None:
+            await self._users.mark_demo_credited(subject)
+            return True
+
+        welcome = Money(self._settings.welcome_amount)
+        await self._ledger.welcome_grant(
+            account,
+            welcome.amount,
+            actor_subject=subject,
+            request_id=request_id,
+            idempotency_key=idempotency_key or f"welcome:{account.id}",
+            source_ip=source_ip,
+            user_agent=user_agent,
+        )
+        await self._users.mark_demo_credited(subject)
+        return True
 
     @staticmethod
     def _view(
