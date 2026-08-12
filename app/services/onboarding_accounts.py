@@ -9,7 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.domain.ids import new_uuid
-from app.errors import AccountNotFound, ForbiddenAccountAccess, OnboardingError
+from app.errors import (
+    AccountNotFound,
+    ForbiddenAccountAccess,
+    OnboardingError,
+    OnboardingNotStarted,
+)
 from app.models.account import Account
 from app.services.account_number import AccountNumberGenerator
 
@@ -25,7 +30,11 @@ async def list_owned_checking(session: AsyncSession, subject: str) -> list[Accou
             Account.owner_subject == subject,
             Account.kind == "checking",
         )
-        .order_by(Account.created_at.asc(), Account.id.asc())
+        .order_by(
+            Account.account_number.asc().nulls_last(),
+            Account.created_at.asc(),
+            Account.id.asc(),
+        )
     )
     return list(result.scalars().all())
 
@@ -69,22 +78,16 @@ async def resolve_onboarding_account(
     account_id: str | None,
     *,
     create_if_missing: bool,
-    allow_single_ready: bool = False,
 ) -> Account:
+    """Target an explicit account, or create the first checking if the user has none."""
     if account_id:
         return await get_owned_checking(session, subject, account_id)
-
     rows = await list_owned_checking(session, subject)
-    incomplete = [row for row in rows if row.onboarding_status in INCOMPLETE_STATUSES]
-    if len(incomplete) == 1:
-        return incomplete[0]
-    if not rows:
-        if create_if_missing:
-            return await create_draft_checking(session, subject)
-        raise OnboardingError("onboarding session not started")
-    if allow_single_ready and len(rows) == 1 and not incomplete:
-        return rows[0]
-    raise OnboardingError(ACCOUNT_ID_REQUIRED)
+    if rows:
+        raise OnboardingError(ACCOUNT_ID_REQUIRED)
+    if create_if_missing:
+        return await create_draft_checking(session, subject)
+    raise OnboardingNotStarted()
 
 
 def require_ready(account: Account) -> None:

@@ -70,7 +70,11 @@ class AccountRepository:
                 Account.owner_subject == owner_subject,
                 Account.kind == kind,
             )
-            .order_by(Account.created_at.asc(), Account.id.asc())
+            .order_by(
+                Account.account_number.asc().nulls_last(),
+                Account.created_at.asc(),
+                Account.id.asc(),
+            )
             .limit(1),
         )
         account = result.scalar_one_or_none()
@@ -90,7 +94,11 @@ class AccountRepository:
                 Account.owner_subject == owner_subject,
                 Account.kind == kind,
             )
-            .order_by(Account.created_at.asc(), Account.id.asc()),
+            .order_by(
+                Account.account_number.asc().nulls_last(),
+                Account.created_at.asc(),
+                Account.id.asc(),
+            ),
         )
         rows = list(result.scalars().all())
         out: list[AccountRecord] = []
@@ -398,6 +406,5 @@ class AccountRepository:
             overdraft_limit=Decimal(str(account.overdraft_limit or 0)),
             account_number=account.account_number,
             digit=account.digit,
-            onboarding_status=getattr(account, "onboarding_status", None)
-            or "not_started",
+            onboarding_status=account.onboarding_status,
         )

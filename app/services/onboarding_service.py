@@ -1,14 +1,16 @@
-from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logger import get_logger
-from app.errors import OnboardingError
+from app.errors import OnboardingError, OnboardingNotStarted
 from app.models.account import Account
 from app.models.holder import Holder
 from app.repositories.user_repository import OnboardingRepository, UserRepository
-from app.services.onboarding_accounts import resolve_onboarding_account
+from app.services.onboarding_accounts import (
+    INCOMPLETE_STATUSES,
+    resolve_onboarding_account,
+)
 
 logger = get_logger(__name__)
 
@@ -16,7 +18,6 @@ TOS_POLICY = "demo-bank-tos-v1"
 DD_POLICY = "demo-dd-v1"
 DD_SKIP_POLICY = "demo-dd-skip-v1"
 ALLOWED_DOC_TYPES = frozenset({"identity_document", "address_proof"})
-_TERMINAL_SESSION = frozenset({"skipped", "approved_demo"})
 
 
 class OnboardingService:
@@ -37,12 +38,9 @@ class OnboardingService:
                 subject,
                 account_id,
                 create_if_missing=False,
-                allow_single_ready=True,
             )
-        except OnboardingError as exc:
-            if str(exc) == "onboarding session not started":
-                return await self._empty_status(subject)
-            raise
+        except OnboardingNotStarted:
+            return await self._empty_status(subject)
         return await self._status_for(subject, account)
 
     async def start(
@@ -56,11 +54,8 @@ class OnboardingService:
             subject,
             account_id,
             create_if_missing=True,
-            allow_single_ready=False,
         )
-        session = await self._onboarding.latest_session(subject, account.id)
-        if session is None or session.status in _TERMINAL_SESSION:
-            session = await self._onboarding.create_session(subject, account.id)
+        session = await self._onboarding.ensure_session(subject, account.id)
         account.onboarding_status = "in_progress"
         await self._session.flush()
         logger.info(
@@ -79,35 +74,6 @@ class OnboardingService:
         logger.info("consent_recorded", subject=subject, policy=policy_version)
         return {"ok": True, "policy_version": policy_version}
 
-    async def skip(
-        self,
-        subject: str,
-        account_id: str | None = None,
-    ) -> dict[str, Any]:
-        await self._users.upsert(subject)
-        await self._onboarding.record_consent(subject, DD_SKIP_POLICY)
-        account = await resolve_onboarding_account(
-            self._session,
-            subject,
-            account_id,
-            create_if_missing=True,
-            allow_single_ready=True,
-        )
-        session = await self._onboarding.latest_session(subject, account.id)
-        if session is None:
-            session = await self._onboarding.create_session(subject, account.id)
-        session.status = "skipped"
-        session.skipped_at = datetime.now(UTC)
-        account.onboarding_status = "skipped"
-        await self._session.flush()
-        logger.info(
-            "onboarding_skipped",
-            subject=subject,
-            account_id=account.id,
-            session_id=session.id,
-        )
-        return await self._status_for(subject, account)
-
     async def attach_document(
         self,
         subject: str,
@@ -125,11 +91,9 @@ class OnboardingService:
             subject,
             account_id,
             create_if_missing=True,
-            allow_single_ready=False,
         )
-        session = await self._onboarding.latest_session(subject, account.id)
-        if session is None or session.status in _TERMINAL_SESSION:
-            session = await self._onboarding.create_session(subject, account.id)
+        session = await self._onboarding.ensure_session(subject, account.id)
+        if account.onboarding_status in INCOMPLETE_STATUSES:
             account.onboarding_status = "in_progress"
             await self._session.flush()
 
@@ -147,36 +111,6 @@ class OnboardingService:
             account_id=account.id,
             doc_type=doc_type,
             has_pde_id=bool(pde_extraction_id),
-        )
-        return await self._status_for(subject, account)
-
-    async def complete(
-        self,
-        subject: str,
-        account_id: str | None = None,
-    ) -> dict[str, Any]:
-        await self._users.upsert(subject)
-        account = await resolve_onboarding_account(
-            self._session,
-            subject,
-            account_id,
-            create_if_missing=False,
-            allow_single_ready=True,
-        )
-        session = await self._onboarding.latest_session(subject, account.id)
-        if session is None:
-            raise OnboardingError("onboarding session not started")
-        if session.status == "skipped":
-            return await self._status_for(subject, account)
-        session.status = "approved_demo"
-        session.completed_at = datetime.now(UTC)
-        account.onboarding_status = "completed"
-        await self._session.flush()
-        logger.info(
-            "onboarding_completed",
-            subject=subject,
-            account_id=account.id,
-            session_id=session.id,
         )
         return await self._status_for(subject, account)
 

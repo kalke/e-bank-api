@@ -411,34 +411,19 @@ class DemoBankService:
         self,
         subject: str,
         account_id: str,
-        *,
-        require_ready: bool = False,
     ) -> AccountRecord:
         account = await self._accounts.get(account_id)
         if account is None or account.kind != "checking":
             raise AccountNotFound(account_id)
         if account.owner_subject != subject:
             raise ForbiddenAccountAccess(account_id)
-        if require_ready and account.onboarding_status not in READY_STATUSES:
-            raise OnboardingError("complete onboarding before using the bank")
         return account
 
-    async def _require_owned_checking(
-        self,
-        subject: str,
-        *,
-        require_ready: bool = False,
-    ) -> AccountRecord:
+    async def _require_owned_checking(self, subject: str) -> AccountRecord:
         rows = await self._accounts.list_by_owner_kind(subject, "checking")
         if not rows:
             raise AccountNotFound("checking")
-        if require_ready:
-            ready = [row for row in rows if row.onboarding_status in READY_STATUSES]
-            if not ready:
-                raise OnboardingError("complete onboarding before using the bank")
-            account = ready[0]
-        else:
-            account = rows[0]
+        account = rows[0]
         if account.owner_subject != subject:
             raise ForbiddenAccountAccess(account.id)
         return account

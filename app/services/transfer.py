@@ -18,7 +18,11 @@ from app.errors import (
 from app.models.account import Account
 from app.models.holder import Holder
 from app.services.ledger import IdempotentReplay, LedgerService
-from app.services.onboarding_accounts import READY_STATUSES, require_ready
+from app.services.onboarding_accounts import (
+    get_owned_checking,
+    list_owned_checking,
+    require_ready,
+)
 from app.services.recipient import RecipientResolver
 
 logger = get_logger(__name__)
@@ -42,21 +46,13 @@ class TransferService:
         return {"holder_name": name, "holder_email": email}
 
     async def require_onboarded_account(self, subject: str) -> Account:
-        result = await self._session.execute(
-            select(Account)
-            .where(
-                Account.owner_subject == subject,
-                Account.kind == "checking",
-                Account.onboarding_status.in_(tuple(READY_STATUSES)),
-            )
-            .order_by(Account.created_at.asc(), Account.id.asc())
-            .limit(1)
-        )
-        account = result.scalar_one_or_none()
-        if account is None:
+        rows = await list_owned_checking(self._session, subject)
+        if not rows:
             raise OnboardingError("complete onboarding before using the bank")
+        account = rows[0]
         if account.status != "active":
             raise ForbiddenAccountAccess(account.id)
+        require_ready(account)
         return account
 
     async def require_owned_account(
@@ -64,9 +60,7 @@ class TransferService:
         subject: str,
         account_id: str,
     ) -> Account:
-        account = await self._session.get(Account, account_id)
-        if account is None or account.owner_subject != subject:
-            raise ForbiddenAccountAccess(account_id)
+        account = await get_owned_checking(self._session, subject, account_id)
         if account.status != "active":
             raise ForbiddenAccountAccess(account_id)
         require_ready(account)
@@ -130,7 +124,7 @@ class TransferService:
 
         if dest.id == origin.id:
             raise SameAccountTransfer()
-        if dest.owner_subject == subject:
+        if dest.owner_subject is not None:
             require_ready(dest)
 
         # Lock both rows in stable order

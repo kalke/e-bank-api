@@ -58,3 +58,8 @@ class SameAccountTransfer(DomainError):
 
 class OnboardingError(DomainError):
     status_code = 400
+
+
+class OnboardingNotStarted(OnboardingError):
+    def __init__(self) -> None:
+        super().__init__("onboarding session not started")

@@ -186,8 +186,10 @@ async def test_cep_lookup_success_and_404() -> None:
 
 
 def _open(client: TestClient) -> dict:
-    client.post("/v1/onboarding/start")
-    skip = client.post("/v1/onboarding/skip")
+    started = client.post("/v1/onboarding/start")
+    assert started.status_code == 200, started.json()
+    account_id = started.json()["account_id"]
+    skip = client.post(f"/v1/onboarding/skip?account_id={account_id}")
     assert skip.status_code == 200
     return skip.json()
 
@@ -215,10 +217,12 @@ def test_money_gated_until_onboarding(client: TestClient) -> None:
 
 
 def test_complete_requires_terms(client: TestClient) -> None:
-    client.post("/v1/onboarding/start")
+    started = client.post("/v1/onboarding/start")
+    account_id = started.json()["account_id"]
     response = client.post(
         "/v1/onboarding/complete",
         json={
+            "account_id": account_id,
             "full_name": "Maria Silva",
             "birth_date": "1990-05-20",
             "document_number": VALID_CPF,

@@ -77,7 +77,11 @@ class RecipientResolver:
                 Account.kind == "checking",
                 Account.status == "active",
             )
-            .order_by(Account.created_at.asc(), Account.id.asc())
+            .order_by(
+                Account.account_number.asc().nulls_last(),
+                Account.created_at.asc(),
+                Account.id.asc(),
+            )
         )
         accounts = list(acc_result.scalars().all())
         if not accounts:

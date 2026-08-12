@@ -4,11 +4,36 @@ from fastapi.testclient import TestClient
 VALID_CPF = "39053344705"
 
 
+def _start(client: TestClient) -> str:
+    res = client.post("/v1/onboarding/start")
+    assert res.status_code == 200, res.json()
+    account_id = res.json()["account_id"]
+    assert account_id
+    return account_id
+
+
 def _open_account(client: TestClient) -> dict:
-    client.post("/v1/onboarding/start")
-    skip = client.post("/v1/onboarding/skip")
+    account_id = _start(client)
+    skip = client.post(f"/v1/onboarding/skip?account_id={account_id}")
     assert skip.status_code == 200
     return skip.json()
+
+
+def _kyc(account_id: str, **overrides: object) -> dict:
+    body: dict = {
+        "account_id": account_id,
+        "full_name": "Maria Silva",
+        "birth_date": "1990-05-20",
+        "document_number": VALID_CPF,
+        "cep": "01310100",
+        "street": "Av Paulista",
+        "number": "1000",
+        "email": "maria@example.com",
+        "phone": "11987654321",
+        "terms_accepted": True,
+    }
+    body.update(overrides)
+    return body
 
 
 def test_demo_meta(client: TestClient) -> None:
@@ -36,7 +61,7 @@ def test_skip_opens_account_with_number(client: TestClient) -> None:
     assert 0 <= body["digit"] <= 9
     UUID(body["id"])  # public account id is UUID v4
 
-    again = client.post("/v1/onboarding/skip")
+    again = client.post(f"/v1/onboarding/skip?account_id={body['id']}")
     assert again.status_code == 200
     assert again.json()["id"] == body["id"]
     assert again.json()["balance"] == "10000.00"
@@ -71,17 +96,7 @@ def test_skip_then_complete_keeps_same_user_account(client: TestClient) -> None:
 
     complete = client.post(
         "/v1/onboarding/complete",
-        json={
-            "full_name": "Maria Silva",
-            "birth_date": "1990-05-20",
-            "document_number": VALID_CPF,
-            "cep": "01310100",
-            "street": "Av Paulista",
-            "number": "1000",
-            "email": "maria@example.com",
-            "phone": "11987654321",
-            "terms_accepted": True,
-        },
+        json=_kyc(account_id),
     )
     assert complete.status_code == 200, complete.json()
     body = complete.json()
@@ -97,20 +112,10 @@ def test_skip_then_complete_keeps_same_user_account(client: TestClient) -> None:
 
 
 def test_additional_checking_accounts_same_cpf(client: TestClient) -> None:
-    client.post("/v1/onboarding/start")
+    account_id = _start(client)
     first = client.post(
         "/v1/onboarding/complete",
-        json={
-            "full_name": "Maria Silva",
-            "birth_date": "1990-05-20",
-            "document_number": VALID_CPF,
-            "cep": "01310100",
-            "street": "Av Paulista",
-            "number": "1000",
-            "email": "maria@example.com",
-            "phone": "11987654321",
-            "terms_accepted": True,
-        },
+        json=_kyc(account_id),
     )
     assert first.status_code == 200, first.json()
     first_body = first.json()
@@ -194,26 +199,61 @@ def test_additional_checking_accounts_same_cpf(client: TestClient) -> None:
     assert resolve.status_code == 400
 
 
+def test_account_id_required_once_a_checking_exists(client: TestClient) -> None:
+    empty = client.get("/v1/onboarding")
+    assert empty.status_code == 200
+    assert empty.json()["onboarding_status"] == "not_started"
+    assert empty.json()["account_id"] is None
+
+    first = client.post("/v1/onboarding/skip")
+    assert first.status_code == 200
+    assert first.json()["onboarding_status"] == "skipped"
+
+    assert client.get("/v1/onboarding").status_code == 400
+    assert client.post("/v1/onboarding/start").status_code == 400
+    assert client.post("/v1/onboarding/skip").status_code == 400
+    body = {k: v for k, v in _kyc(first.json()["id"]).items() if k != "account_id"}
+    assert client.post("/v1/onboarding/complete", json=body).status_code == 400
+
+
+def test_default_money_ops_follow_primary_account(client: TestClient) -> None:
+    first = _open_account(client)
+    extra = client.post(
+        "/v1/me/accounts",
+        headers={"Idempotency-Key": "extra-primary-restart"},
+    )
+    assert extra.status_code == 200
+    client.post(
+        f"/v1/onboarding/skip?account_id={extra.json()['id']}",
+        headers={"Idempotency-Key": "extra-primary-restart-skip"},
+    )
+    client.post(f"/v1/onboarding/start?account_id={first['id']}")
+    me = client.get("/v1/me/account")
+    assert me.json()["id"] == first["id"]
+    assert me.json()["onboarding_status"] == "in_progress"
+    blocked = client.post(
+        "/v1/me/withdraw",
+        headers={"Idempotency-Key": "wd-primary-frozen"},
+        json={"amount": "1.00"},
+    )
+    assert blocked.status_code == 400
+    still_extra = client.get(f"/v1/me/accounts/{extra.json()['display_number']}")
+    assert still_extra.json()["onboarding_status"] == "skipped"
+    assert still_extra.json()["balance"] == "10000.00"
+
+
 def test_onboarding_complete_full(client: TestClient) -> None:
-    client.post("/v1/onboarding/start")
+    account_id = _start(client)
     complete = client.post(
         "/v1/onboarding/complete",
-        json={
-            "full_name": "Maria Silva",
-            "birth_date": "1990-05-20",
-            "document_number": VALID_CPF,
-            "cep": "01310100",
-            "street": "Av Paulista",
-            "number": "1000",
-            "complement": "cj 10",
-            "neighborhood": "Bela Vista",
-            "city": "Sao Paulo",
-            "state": "SP",
-            "email": "maria@example.com",
-            "phone": "11987654321",
-            "terms_accepted": True,
-            "accepted_at": "2026-08-10T12:00:00Z",
-        },
+        json=_kyc(
+            account_id,
+            complement="cj 10",
+            neighborhood="Bela Vista",
+            city="Sao Paulo",
+            state="SP",
+            accepted_at="2026-08-10T12:00:00Z",
+        ),
     )
     assert complete.status_code == 200
     body = complete.json()
@@ -223,20 +263,17 @@ def test_onboarding_complete_full(client: TestClient) -> None:
 
 
 def test_onboarding_rejects_underage(client: TestClient) -> None:
-    client.post("/v1/onboarding/start")
+    account_id = _start(client)
     response = client.post(
         "/v1/onboarding/complete",
-        json={
-            "full_name": "Kid",
-            "birth_date": "2015-01-01",
-            "document_number": VALID_CPF,
-            "cep": "01310100",
-            "street": "Rua A",
-            "number": "1",
-            "email": "kid@example.com",
-            "phone": "11987654321",
-            "terms_accepted": True,
-        },
+        json=_kyc(
+            account_id,
+            full_name="Kid",
+            birth_date="2015-01-01",
+            street="Rua A",
+            number="1",
+            email="kid@example.com",
+        ),
     )
     assert response.status_code == 400
 
@@ -332,22 +369,10 @@ def test_accounts_list(client: TestClient) -> None:
 
 
 def test_resolve_by_document(client: TestClient) -> None:
-    client.post("/v1/onboarding/start")
+    account_id = _start(client)
     client.post(
         "/v1/onboarding/complete",
-        json={
-            "full_name": "Maria Silva",
-            "birth_date": "1990-05-20",
-            "document_number": VALID_CPF,
-            "cep": "01310100",
-            "street": "Av Paulista",
-            "number": "1000",
-            "city": "Sao Paulo",
-            "state": "SP",
-            "email": "maria@example.com",
-            "phone": "11987654321",
-            "terms_accepted": True,
-        },
+        json=_kyc(account_id, city="Sao Paulo", state="SP"),
     )
     resolved = client.post(
         "/v1/me/transfers/resolve",

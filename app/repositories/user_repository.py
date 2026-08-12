@@ -1,4 +1,3 @@
-from datetime import UTC, datetime
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -48,21 +47,6 @@ class UserRepository:
         await self._session.flush()
         return user
 
-    async def set_onboarding_status(self, subject: str, status: str) -> User:
-        user = await self.get(subject)
-        if user is None:
-            raise ValueError(f"user {subject} not found")
-        user.onboarding_status = status
-        await self._session.flush()
-        return user
-
-    async def mark_demo_credited(self, subject: str) -> None:
-        user = await self.get(subject)
-        if user is None:
-            return
-        user.demo_credited_at = datetime.now(UTC)
-        await self._session.flush()
-
 
 class DemoGrantRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -99,20 +83,23 @@ class OnboardingRepository:
     async def latest_session(
         self,
         subject: str,
-        account_id: str | None = None,
+        account_id: str,
     ) -> OnboardingSession | None:
-        stmt = select(OnboardingSession).where(OnboardingSession.subject == subject)
-        if account_id:
-            stmt = stmt.where(OnboardingSession.account_id == account_id)
         result = await self._session.execute(
-            stmt.order_by(OnboardingSession.created_at.desc()).limit(1),
+            select(OnboardingSession)
+            .where(
+                OnboardingSession.subject == subject,
+                OnboardingSession.account_id == account_id,
+            )
+            .order_by(OnboardingSession.created_at.desc())
+            .limit(1),
         )
         return result.scalar_one_or_none()
 
     async def create_session(
         self,
         subject: str,
-        account_id: str | None = None,
+        account_id: str,
     ) -> OnboardingSession:
         session = OnboardingSession(
             id=new_uuid(),
@@ -122,6 +109,16 @@ class OnboardingRepository:
         )
         self._session.add(session)
         await self._session.flush()
+        return session
+
+    async def ensure_session(
+        self,
+        subject: str,
+        account_id: str,
+    ) -> OnboardingSession:
+        session = await self.latest_session(subject, account_id)
+        if session is None or session.status in {"skipped", "approved_demo"}:
+            return await self.create_session(subject, account_id)
         return session
 
     async def get_session(self, session_id: str) -> OnboardingSession | None:

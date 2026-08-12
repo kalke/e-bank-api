@@ -25,7 +25,7 @@ from app.models.holder import Holder
 from app.models.transaction import Transaction
 from app.repositories.user_repository import OnboardingRepository, UserRepository
 from app.services.demo_service import DemoAccountView
-from app.services.ledger import LedgerService
+from app.services.ledger import IdempotentReplay, LedgerService
 from app.services.onboarding_accounts import (
     create_draft_checking,
     resolve_onboarding_account,
@@ -61,11 +61,8 @@ class OnboardingCompletionService:
             subject,
             account_id or payload.get("account_id"),
             create_if_missing=True,
-            allow_single_ready=True,
         )
-        session = await self._onboarding.latest_session(subject, account.id)
-        if session is None:
-            await self._onboarding.create_session(subject, account.id)
+        await self._onboarding.ensure_session(subject, account.id)
 
         holder_data = self._validate_full(payload)
         await self._onboarding.record_consent(subject, TOS_POLICY)
@@ -103,11 +100,8 @@ class OnboardingCompletionService:
             subject,
             account_id,
             create_if_missing=True,
-            allow_single_ready=True,
         )
-        session = await self._onboarding.latest_session(subject, account.id)
-        if session is None:
-            await self._onboarding.create_session(subject, account.id)
+        await self._onboarding.ensure_session(subject, account.id)
 
         holder = await self._session.get(Holder, subject)
         if holder is None:
@@ -176,6 +170,7 @@ class OnboardingCompletionService:
         user_agent: str | None,
         idempotency_key: str | None,
     ) -> DemoAccountView:
+        _ = idempotency_key
         holder = await self._upsert_holder(subject, holder_data)
         if account.account_number is None or account.digit is None:
             from app.services.account_number import AccountNumberGenerator
@@ -187,11 +182,9 @@ class OnboardingCompletionService:
 
         demo_credited = await self._ensure_welcome(
             account,
-            subject,
             request_id=request_id,
             source_ip=source_ip,
             user_agent=user_agent,
-            idempotency_key=idempotency_key,
         )
 
         session = await self._onboarding.latest_session(subject, account.id)
@@ -239,13 +232,15 @@ class OnboardingCompletionService:
     async def _ensure_welcome(
         self,
         account: Account,
-        subject: str,
         *,
         request_id: str | None,
         source_ip: str | None,
         user_agent: str | None,
-        idempotency_key: str | None,
     ) -> bool:
+        locked = await self._session.execute(
+            select(Account).where(Account.id == account.id).with_for_update()
+        )
+        account = locked.scalar_one()
         existing = await self._session.execute(
             select(Transaction.id)
             .where(
@@ -255,20 +250,21 @@ class OnboardingCompletionService:
             .limit(1)
         )
         if existing.scalar_one_or_none() is not None:
-            await self._users.mark_demo_credited(subject)
             return True
 
         welcome = Money(self._settings.welcome_amount)
-        await self._ledger.welcome_grant(
-            account,
-            welcome.amount,
-            actor_subject=subject,
-            request_id=request_id,
-            idempotency_key=idempotency_key or f"welcome:{account.id}",
-            source_ip=source_ip,
-            user_agent=user_agent,
-        )
-        await self._users.mark_demo_credited(subject)
+        try:
+            await self._ledger.welcome_grant(
+                account,
+                welcome.amount,
+                actor_subject=account.owner_subject,
+                request_id=request_id,
+                idempotency_key=f"welcome:{account.id}",
+                source_ip=source_ip,
+                user_agent=user_agent,
+            )
+        except IdempotentReplay:
+            return True
         return True
 
     @staticmethod
