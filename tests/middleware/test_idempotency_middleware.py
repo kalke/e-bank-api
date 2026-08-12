@@ -47,6 +47,24 @@ def idempotency_app() -> FastAPI:
         handler_calls["count"] += 1
         return JSONResponse(status_code=200, content={"status": "ok"})
 
+    @app.post("/onboarding/start")
+    async def onboarding_start(account_id: str | None = None) -> JSONResponse:
+        handler_calls["count"] += 1
+        return JSONResponse(status_code=200, content={"account_id": account_id})
+
+    @app.post("/fail")
+    async def fail_once(payload: dict = Body(...)) -> JSONResponse:
+        handler_calls["count"] += 1
+        return JSONResponse(status_code=400, content={"error": "nope"})
+
+    @app.post("/accounts")
+    async def open_account() -> JSONResponse:
+        handler_calls["count"] += 1
+        return JSONResponse(
+            status_code=201,
+            content={"id": handler_calls["count"]},
+        )
+
     app.state.handler_calls = handler_calls
     return app
 
@@ -179,6 +197,45 @@ class TestIdempotencyMiddleware:
         assert first.status_code == 201
         assert second.status_code == 201
         assert first.headers["X-Idempotency-Key"] != second.headers["X-Idempotency-Key"]
+        assert idempotency_app.state.handler_calls["count"] == 2
+
+    def test_query_string_is_part_of_idempotency_key(
+        self,
+        client: TestClient,
+        idempotency_app: FastAPI,
+    ) -> None:
+        first = client.post("/onboarding/start?account_id=a")
+        second = client.post("/onboarding/start?account_id=b")
+        replay = client.post("/onboarding/start?account_id=a")
+
+        assert first.json()["account_id"] == "a"
+        assert second.json()["account_id"] == "b"
+        assert replay.headers["X-Idempotency-Status"] == "HIT"
+        assert replay.json()["account_id"] == "a"
+        assert idempotency_app.state.handler_calls["count"] == 2
+
+    def test_error_responses_are_not_cached(
+        self,
+        client: TestClient,
+        idempotency_app: FastAPI,
+    ) -> None:
+        body = {"type": "withdraw", "amount": 1}
+        first = client.post("/fail", json=body)
+        second = client.post("/fail", json=body)
+
+        assert first.status_code == 400
+        assert second.status_code == 400
+        assert "X-Idempotency-Status" not in first.headers
+        assert idempotency_app.state.handler_calls["count"] == 2
+
+    def test_empty_body_create_is_not_cached(
+        self,
+        client: TestClient,
+        idempotency_app: FastAPI,
+    ) -> None:
+        first = client.post("/accounts")
+        second = client.post("/accounts")
+        assert first.json()["id"] != second.json()["id"]
         assert idempotency_app.state.handler_calls["count"] == 2
 
 

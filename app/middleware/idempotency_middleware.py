@@ -72,6 +72,14 @@ def extract_user_id(request: Request, payload: dict[str, Any]) -> str | None:
     return resolved.subject
 
 
+def _idempotency_route(request: Request) -> str:
+    path = request.url.path
+    query = request.url.query
+    if query:
+        return f"{path}?{query}"
+    return path
+
+
 def _parse_body(body: bytes) -> dict[str, Any]:
     if not body:
         return {}
@@ -135,7 +143,7 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         user_id = extract_user_id(request, payload)
         assert user_id is not None
 
-        route = request.url.path
+        route = _idempotency_route(request)
         method = request.method
         idempotency_key = await self._generate_key_or_error(
             service,
@@ -210,6 +218,10 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
 
         payload = _parse_body(body)
         if extract_user_id(request, payload) is None:
+            return await call_next(self._rebuild_request(request, body))
+
+        client_key = (request.headers.get("Idempotency-Key") or "").strip()
+        if not payload and not request.url.query and not client_key:
             return await call_next(self._rebuild_request(request, body))
 
         return None
@@ -347,6 +359,17 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
 
         raw_body = await _read_response_bytes(response)
         response_body = _parse_response_bytes(raw_body)
+        if response.status_code >= 400:
+            storage_error = await self._clear_on_handler_failure(
+                service,
+                idempotency_key,
+                route,
+                user_id,
+            )
+            if storage_error is not None:
+                return storage_error
+            return _rebuild_response(response, raw_body)
+
         try:
             await service.set_completed(
                 idempotency_key,
