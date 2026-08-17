@@ -158,26 +158,38 @@ jobs:
           OIDC_AUDIENCE: ${{ secrets.OIDC_AUDIENCE }}
           M2M_USER_FORWARD_SECRET: ${{ secrets.M2M_USER_FORWARD_SECRET }}
           S3_BANK_PDF_BUCKET: ${{ secrets.S3_BANK_PDF_BUCKET }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
         run: |
           set -euo pipefail
           umask 077
           region="${AWS_REGION:-us-east-1}"
           export AWS_REGION="$region"
-          for k in DATABASE_URL REDIS_URL M2M_USER_FORWARD_SECRET; do
+          for k in REDIS_URL M2M_USER_FORWARD_SECRET; do
             [[ -n "${!k:-}" ]] || { echo "missing secret: $k" >&2; exit 1; }
           done
+          if [[ -z "${POSTGRES_PASSWORD:-}" && -f "${REPO_DIR}/prod.env" ]]; then
+            POSTGRES_PASSWORD="$(awk -F= '/^POSTGRES_PASSWORD=/{sub(/^[^=]*=/,""); gsub(/^['\''"]+|['\''"]+$/,""); print; exit}' "${REPO_DIR}/prod.env" || true)"
+          fi
+          if [[ -z "${POSTGRES_PASSWORD:-}" ]]; then
+            POSTGRES_PASSWORD="$(openssl rand -hex 16)"
+            echo "generated POSTGRES_PASSWORD for Docker Postgres"
+          fi
+          export POSTGRES_PASSWORD
           payload="$(mktemp)"
           python3 - <<'PY' >"${payload}"
           import json, os
           region = os.environ.get("AWS_REGION") or "us-east-1"
-          print(json.dumps({
+          pw = os.environ["POSTGRES_PASSWORD"]
+          docker_url = f"postgresql+asyncpg://ebank:{pw}@ebank-db:5432/ebank"
+          neon = (os.environ.get("DATABASE_URL") or "").strip()
+          blob = {
               "ENV": "production",
               "LOG_LEVEL": "INFO",
               "LOG_FORMAT": "json",
               "SERVICE_NAME": "e-bank-api",
               "RESET_ENABLED": "false",
               "LEGACY_CHALLENGE_ROUTES": "false",
-              "DATABASE_URL": os.environ["DATABASE_URL"],
+              "DATABASE_URL": docker_url,
               "REDIS_URL": os.environ["REDIS_URL"],
               "IDEMPOTENCY_ENABLED": "true",
               "IDEMPOTENCY_EXCLUDE_PATHS": "/health,/ready,/metrics",
@@ -196,12 +208,16 @@ jobs:
               "CORS_ORIGINS": "https://kalke.dev,https://www.kalke.dev",
               "AWS_REGION": region,
               "S3_BANK_PDF_BUCKET": os.environ.get("S3_BANK_PDF_BUCKET") or "",
-          }))
+          }
+          if "neon.tech" in neon:
+              blob["NEON_DATABASE_URL"] = neon
+          print(json.dumps(blob))
           PY
           chmod +x "${REPO_DIR}/scripts/sync-secret.sh"
           "${REPO_DIR}/scripts/sync-secret.sh" \
             "${SECRET_ID}" "${payload}" "${REPO_DIR}/prod.env" \
-            "S3_BANK_PDF_BUCKET=${S3_BANK_PDF_BUCKET:-}"
+            "S3_BANK_PDF_BUCKET=${S3_BANK_PDF_BUCKET:-}" \
+            "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}"
           rm -f "${payload}"
 
       - name: Login to GHCR
@@ -215,6 +231,7 @@ jobs:
         working-directory: /home/ubuntu/e-bank-api
         env:
           EBANK_IMAGE: ${{ needs.docker.outputs.image }}
+          NEON_DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           set -euo pipefail
           export EBANK_IMAGE
