@@ -25,7 +25,6 @@ Docker JWKS: `OIDC_DISCOVERY_URL=http://caddy:8443/...` while JWT `iss` stays ho
 | `make up` / `up-all` | API stack (+ auth) |
 | `make auth-token` | Demo user JWT |
 | `make aws-up` | Prod: Docker Postgres + pull GHCR on EC2 |
-| `make aws-migrate-from-neon` | Dump Neon into Docker Postgres |
 
 ## Auth
 
@@ -38,7 +37,7 @@ Docker JWKS: `OIDC_DISCOVERY_URL=http://caddy:8443/...` while JWT `iss` stays ho
 
 Config: [`.env.example`](.env.example), [`prod.env.example`](prod.env.example).
 
-Production Postgres is Docker on the same EC2 (`ebank-db` on `kalke-auth_default`). It is not published on `:5432`. `make aws-up` starts Postgres, dumps Neon into the volume when empty (`scripts/migrate-from-neon.sh --if-empty`), then starts the API. Prefer **t3.small (2 GB)** + swap; a 1 GB `t3.micro` will OOM with Keycloak + two Postgres containers. After a successful cutover, delete the Neon project. Optional later: cron `pg_dump` to S3.
+Production Postgres is Docker on the same EC2 (`ebank-db` on `kalke-auth_default`). It is not published on `:5432`. `make aws-up` starts Postgres, then the API (Alembic on container start). Prefer **t3.small (2 GB)** + swap; a 1 GB `t3.micro` will OOM with Keycloak + two Postgres containers. Optional later: cron `pg_dump` to S3.
 
 ## Demo routes
 

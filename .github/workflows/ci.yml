@@ -152,7 +152,6 @@ jobs:
           AWS_REGION: ${{ secrets.AWS_REGION }}
           SECRET_ID: kalke/e-bank-api/prod
           REPO_DIR: /home/ubuntu/e-bank-api
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
           REDIS_URL: ${{ secrets.REDIS_URL }}
           OIDC_ISSUER: ${{ secrets.OIDC_ISSUER }}
           OIDC_AUDIENCE: ${{ secrets.OIDC_AUDIENCE }}
@@ -181,7 +180,6 @@ jobs:
           region = os.environ.get("AWS_REGION") or "us-east-1"
           pw = os.environ["POSTGRES_PASSWORD"]
           docker_url = f"postgresql+asyncpg://ebank:{pw}@ebank-db:5432/ebank"
-          neon = (os.environ.get("DATABASE_URL") or "").strip()
           blob = {
               "ENV": "production",
               "LOG_LEVEL": "INFO",
@@ -208,9 +206,10 @@ jobs:
               "CORS_ORIGINS": "https://kalke.dev,https://www.kalke.dev",
               "AWS_REGION": region,
               "S3_BANK_PDF_BUCKET": os.environ.get("S3_BANK_PDF_BUCKET") or "",
+              "POSTGRES_USER": "ebank",
+              "POSTGRES_DB": "ebank",
+              "POSTGRES_PASSWORD": pw,
           }
-          if "neon.tech" in neon:
-              blob["NEON_DATABASE_URL"] = neon
           print(json.dumps(blob))
           PY
           chmod +x "${REPO_DIR}/scripts/sync-secret.sh"
@@ -231,7 +230,6 @@ jobs:
         working-directory: /home/ubuntu/e-bank-api
         env:
           EBANK_IMAGE: ${{ needs.docker.outputs.image }}
-          NEON_DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           set -euo pipefail
           export EBANK_IMAGE

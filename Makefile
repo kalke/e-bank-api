@@ -1,8 +1,7 @@
 .PHONY: help setup setup-oidc run test lint lint-ci ci migrate migrate-down migration db-shell \
 	ensure-env docker-config docker-build up docker-up docker-down docker-restart \
 	docker-logs docker-debug restart auth-up auth-down auth-token \
-	ebank-m2m-token smoke-oidc up-all down-all aws-up aws-down aws-ps aws-logs \
-	aws-migrate-from-neon
+	ebank-m2m-token smoke-oidc up-all down-all aws-up aws-down aws-ps aws-logs
 
 COMPOSE := docker compose
 COMPOSE_AWS ?= docker compose -f docker-compose.aws.yml --env-file prod.env
@@ -46,7 +45,6 @@ help:
 	@echo ""
 	@echo "AWS EC2 (prod):"
 	@echo "  aws-up         Prod: local Postgres + pull GHCR on kalke-auth network"
-	@echo "  aws-migrate-from-neon  Dump Neon into Docker Postgres on EC2"
 	@echo "  aws-down       Stop prod API container"
 	@echo "  aws-ps         Show prod container status"
 	@echo "  aws-logs       Tail prod logs"
@@ -154,17 +152,13 @@ aws-up: ## Prod on AWS EC2: local Postgres + GHCR API on kalke-auth network
 		echo "Missing Docker network kalke-auth_default. Start kalke-auth first (make aws-up there)."; \
 		exit 1; \
 	}
-	@bash scripts/migrate-from-neon.sh --ensure-password
+	@chmod +x scripts/ensure-postgres-password.sh
+	@bash scripts/ensure-postgres-password.sh
 	@docker builder prune -af >/dev/null 2>&1 || true
 	EBANK_IMAGE="$(EBANK_IMAGE)" $(COMPOSE_AWS) up -d ebank-db --wait
-	@bash scripts/migrate-from-neon.sh --if-empty
 	EBANK_IMAGE="$(EBANK_IMAGE)" $(COMPOSE_AWS) pull api
 	EBANK_IMAGE="$(EBANK_IMAGE)" $(COMPOSE_AWS) up -d --wait --no-build
 	@docker image prune -f >/dev/null 2>&1 || true
-
-aws-migrate-from-neon: ## Dump Neon into local Docker Postgres (see scripts/migrate-from-neon.sh)
-	@test -f prod.env || { echo "prod.env missing"; exit 1; }
-	bash scripts/migrate-from-neon.sh
 
 aws-down: ## Stop AWS e-bank API
 	$(COMPOSE_AWS) down
