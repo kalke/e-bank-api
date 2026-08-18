@@ -141,9 +141,19 @@ def to_libpq(url: str) -> str:
     u = u.replace("postgresql://", "postgres://", 1)
     p = urlparse(u)
     host = (p.hostname or "").replace("-pooler", "")
-    q = [(k, v) for k, v in parse_qsl(p.query, keep_blank_values=True)]
-    if host.endswith("neon.tech") and not any(k.lower() == "sslmode" for k, _ in q):
-        q.append(("sslmode", "require"))
+    q = []
+    ssl_true = False
+    for k, v in parse_qsl(p.query, keep_blank_values=True):
+        kl = k.lower()
+        if kl == "ssl":
+            ssl_true = v.lower() in ("1", "true", "require")
+            continue
+        if kl == "currentschema":
+            continue
+        q.append((k, v))
+    if ssl_true or host.endswith("neon.tech"):
+        if not any(k.lower() == "sslmode" for k, _ in q):
+            q.append(("sslmode", "require"))
     auth = ""
     if p.username is not None:
         auth = p.username
