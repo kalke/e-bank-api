@@ -205,13 +205,19 @@ if [[ ! -s "${DUMP_DIR}/source.url" ]]; then
 fi
 
 echo "==> Dumping source database"
+dump_rc=0
 docker run --rm \
   -v "${DUMP_DIR}:/dump" \
   postgres:18-alpine \
-  sh -c 'pg_dump --dbname="$(cat /dump/source.url)" --format=custom --no-owner --no-acl --file=/dump/neon.dump'
+  sh -c 'pg_dump --dbname="$(cat /dump/source.url)" --format=custom --no-owner --no-acl --file=/dump/neon.dump' \
+  || dump_rc=$?
 
-if [[ ! -s "${DUMP_DIR}/neon.dump" ]]; then
-  echo "pg_dump produced an empty dump" >&2
+if [[ "$dump_rc" -ne 0 || ! -s "${DUMP_DIR}/neon.dump" ]]; then
+  if [[ "$IF_EMPTY" == 1 ]]; then
+    echo "source dump failed (quota or unreachable); --if-empty continues with empty local postgres"
+    exit 0
+  fi
+  echo "pg_dump failed or produced an empty dump" >&2
   exit 1
 fi
 
