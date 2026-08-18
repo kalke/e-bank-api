@@ -1,8 +1,45 @@
 services:
+  ebank-db:
+    image: postgres:18-alpine
+    container_name: ebank-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ebank}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in prod.env}
+      POSTGRES_DB: ${POSTGRES_DB:-ebank}
+    command:
+      - postgres
+      - -c
+      - shared_buffers=64MB
+      - -c
+      - max_connections=50
+      - -c
+      - effective_cache_size=128MB
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+    mem_limit: 192m
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION:-us-east-1}
+        awslogs-group: /kalke/e-bank-api
+        awslogs-create-group: "true"
+    networks:
+      - kalke-auth
+
   api:
     image: ${EBANK_IMAGE:-ghcr.io/kalke/e-bank-api:latest}
     container_name: ebank-api
     restart: unless-stopped
+    depends_on:
+      ebank-db:
+        condition: service_healthy
     env_file:
       - prod.env
     environment:
@@ -22,6 +59,11 @@ services:
       RATE_LIMIT_ENABLED: "true"
       RESET_ENABLED: "false"
       LEGACY_CHALLENGE_ROUTES: "false"
+      POSTGRES_USER: ${POSTGRES_USER:-ebank}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in prod.env}
+      POSTGRES_DB: ${POSTGRES_DB:-ebank}
+      # Compose wins over Secrets Manager (load_secrets_into_env does not overwrite).
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-ebank}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in prod.env}@ebank-db:5432/${POSTGRES_DB:-ebank}
     logging:
       driver: awslogs
       options:
@@ -44,3 +86,6 @@ networks:
   kalke-auth:
     external: true
     name: kalke-auth_default
+
+volumes:
+  pgdata:

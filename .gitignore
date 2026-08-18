@@ -19,3 +19,4 @@ dist/
 prod.env
 .env.prod
 *:Zone.Identifier
+*.dump
