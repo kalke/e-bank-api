@@ -1,3 +1,5 @@
+# Postgres is Docker-only — do not publish :5432.
+# Static IP 172.18.10.11 for Cloudflare WARP / DBeaver (WARP required).
 services:
   ebank-db:
     image: postgres:18-alpine
@@ -31,7 +33,8 @@ services:
         awslogs-group: /kalke/e-bank-api
         awslogs-create-group: "true"
     networks:
-      - kalke-auth
+      kalke-auth:
+        ipv4_address: 172.18.10.11
 
   api:
     image: ${EBANK_IMAGE:-ghcr.io/kalke/e-bank-api:latest}
