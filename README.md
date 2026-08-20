@@ -37,7 +37,7 @@ Docker JWKS: `OIDC_DISCOVERY_URL=http://caddy:8443/...` while JWT `iss` stays ho
 
 Config: [`.env.example`](.env.example), [`prod.env.example`](prod.env.example).
 
-Production Postgres is Docker on the same EC2 (`ebank-db` on `kalke-auth_default`). It is not published on `:5432`. `make aws-up` starts Postgres, then the API (Alembic on container start). Prefer **t3.small (2 GB)** + swap; a 1 GB `t3.micro` will OOM with Keycloak + two Postgres containers. Optional later: cron `pg_dump` to S3.
+Production Postgres is Docker on the same EC2 (`ebank-db` at `172.18.10.11` on `kalke-auth_default`). It is not published on `:5432`. Connect with DBeaver over Cloudflare WARP (user/db `ebank`). `make aws-up` starts Postgres, then the API (Alembic on container start). Prefer **t3.small (2 GB)** + swap; a 1 GB `t3.micro` will OOM with Keycloak + two Postgres containers. Optional later: cron `pg_dump` to S3.
 
 ## Demo routes
 
